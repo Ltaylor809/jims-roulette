@@ -10,6 +10,8 @@ export class GameUI {
   private controller: GameController | null = null;
   private unsubscribe: (() => void) | null = null;
   private currentState: GameState | null = null;
+  private displayedHealth: Record<Actor, number> | null = null;
+  private committedShotRevision = -1;
   private locked = false;
   private toastTimer = 0;
   private turnTimer = 0;
@@ -90,7 +92,16 @@ export class GameUI {
   attach(controller: GameController): void {
     this.unsubscribe?.();
     this.controller = controller;
+    this.displayedHealth = null;
+    this.committedShotRevision = -1;
     this.unsubscribe = controller.onState((state, locked) => this.render(state, locked));
+  }
+
+  commitShotHealth(event: Extract<GameEvent, { kind: "shot" }>): void {
+    if (event.shell !== "live" || !this.currentState || !this.controller) return;
+    this.committedShotRevision = this.currentState.revision;
+    this.displayedHealth = { ...this.currentState.health };
+    this.paintHealth(this.currentState, this.controller.localActor);
   }
 
   showGame(): void {
@@ -286,10 +297,12 @@ export class GameUI {
     this.get("score-label").textContent = state.mode === "solo" ? `${state.maxHealth} CHARGES` : `${state.roundWins[me]} — ${state.roundWins[rival]}`;
     this.get("player-name").textContent = this.playerName;
     this.get("opponent-name").textContent = state.mode === "solo" ? "THE DEALER" : "OTHER PLAYER";
-    this.get("player-health-text").textContent = `${state.health[me]} / ${state.maxHealth}`;
-    this.get("opponent-health-text").textContent = `${state.health[rival]} / ${state.maxHealth}`;
-    this.renderCharges("player-health", state.health[me], state.maxHealth);
-    this.renderCharges("opponent-health", state.health[rival], state.maxHealth);
+    const deferLiveDamage = state.lastEvent.kind === "shot"
+      && state.lastEvent.shell === "live"
+      && state.lastEvent.damage > 0
+      && state.revision !== this.committedShotRevision;
+    if (!this.displayedHealth || !deferLiveDamage) this.displayedHealth = { ...state.health };
+    this.paintHealth(state, me);
     this.get("live-count").textContent = String(counts.live);
     this.get("blank-count").textContent = String(counts.blank);
     this.get("shoot-opponent").querySelector("strong")!.textContent = state.mode === "solo" ? "THE DEALER" : "OTHER PLAYER";
@@ -302,7 +315,6 @@ export class GameUI {
     if (!myTurn || locked) this.disarmShotgun();
     this.renderInventory(state, me, shootDisabled);
 
-    document.body.classList.toggle("low-health", state.health[me] <= 1 && state.status === "playing");
     if (state.status === "playing") {
       window.clearTimeout(this.resultTimer);
       this.resultTimer = 0;
@@ -333,6 +345,16 @@ export class GameUI {
 
   private renderCharges(id: string, health: number, max: number): void {
     this.get(id).textContent = `${health} of ${max} charges`;
+  }
+
+  private paintHealth(state: GameState, me: Actor): void {
+    const rival = other(me);
+    const health = this.displayedHealth ?? state.health;
+    this.get("player-health-text").textContent = `${health[me]} / ${state.maxHealth}`;
+    this.get("opponent-health-text").textContent = `${health[rival]} / ${state.maxHealth}`;
+    this.renderCharges("player-health", health[me], state.maxHealth);
+    this.renderCharges("opponent-health", health[rival], state.maxHealth);
+    document.body.classList.toggle("low-health", health[me] <= 1 && state.status === "playing");
   }
 
   private setWaiverValue(value: string): void {

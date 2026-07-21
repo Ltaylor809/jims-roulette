@@ -43,6 +43,8 @@ export class ThreeGame {
   private readonly dealerItems = new THREE.Group();
   private readonly shellRackShells = new THREE.Group();
   private readonly briefcaseItems = new THREE.Group();
+  private readonly industrialLights: THREE.PointLight[] = [];
+  private readonly ventilationFans: THREE.Group[] = [];
   private readonly roomEntryDoor = new THREE.Group();
   private readonly homeCamera = new THREE.Vector3(0, 2.08, 3.18);
   private readonly homeLook = new THREE.Vector3(0, 0.84, -0.72);
@@ -61,6 +63,7 @@ export class ThreeGame {
   private hoveredInteraction: string | null = null;
   private lastChamberNumber = -1;
   private pendingReveal: PendingReveal | null = null;
+  private pendingHealthDraw: { state: GameState; localActor: Actor } | null = null;
   private tableActive = false;
   private animationBusy = false;
   private revealScheduled = false;
@@ -150,7 +153,17 @@ export class ThreeGame {
   }
 
   sync(state: GameState, localActor: Actor): void {
-    this.drawHealth(state, localActor);
+    const healthState = {
+      ...state,
+      health: { ...state.health },
+      suddenDeath: { ...state.suddenDeath },
+    };
+    if (state.lastEvent.kind === "shot" && state.lastEvent.shell === "live" && state.lastEvent.damage > 0) {
+      this.pendingHealthDraw = { state: healthState, localActor };
+    } else {
+      this.pendingHealthDraw = null;
+      this.drawHealth(healthState, localActor);
+    }
     this.rebuildItems(state, localActor);
     const boosted = state.damageBoost[localActor] || state.damageBoost[other(localActor)];
     if (boosted) this.shotgunTargetScale = 0.66;
@@ -568,6 +581,7 @@ export class ThreeGame {
       hangingCable.rotation.z = x < 0 ? 0.38 : -0.38;
       this.scene.add(hangingCable);
     }
+    this.buildIndustrialDetails(rust);
 
     this.roomLightLeft.position.set(-1.0, 2.08, -1.82);
     this.roomLightRight.position.set(1.0, 2.08, -1.82);
@@ -607,6 +621,135 @@ export class ThreeGame {
     const particles = new THREE.Points(dustGeometry, new THREE.PointsMaterial({ color: 0xdab6a0, size: 0.01, transparent: true, opacity: 0.25, depthWrite: false }));
     particles.name = "dust";
     this.scene.add(particles);
+  }
+
+  private buildIndustrialDetails(rustTexture: THREE.Texture): void {
+    const root = new THREE.Group();
+    root.name = "industrial-details";
+    const agedMetal = new THREE.MeshStandardMaterial({ map: rustTexture, color: 0x403738, roughness: 0.77, metalness: 0.68 });
+    const darkMetal = new THREE.MeshStandardMaterial({ color: 0x171719, roughness: 0.72, metalness: 0.76 });
+    const brass = new THREE.MeshStandardMaterial({ color: 0x776545, roughness: 0.65, metalness: 0.72 });
+    const warning = new THREE.MeshStandardMaterial({ color: 0x8f5d24, roughness: 0.84, metalness: 0.28 });
+    const rubber = new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 1 });
+    const lampMaterial = new THREE.MeshStandardMaterial({ color: 0x3b0b08, emissive: 0xb12417, emissiveIntensity: 2.4, roughness: 0.5 });
+
+    const ductGeometry = new THREE.CylinderGeometry(0.14, 0.16, 6.65, 14);
+    const collarGeometry = new THREE.TorusGeometry(0.165, 0.018, 7, 18);
+    for (const x of [-2.15, 2.15]) {
+      const duct = new THREE.Mesh(ductGeometry, agedMetal);
+      duct.rotation.x = Math.PI / 2;
+      duct.position.set(x, 2.68, 0.75);
+      root.add(duct);
+      for (const z of [-2.1, -0.65, 0.8, 2.25, 3.65]) {
+        const collar = new THREE.Mesh(collarGeometry, darkMetal);
+        collar.position.set(x, 2.68, z);
+        root.add(collar);
+      }
+    }
+
+    const boltGeometry = new THREE.CylinderGeometry(0.034, 0.034, 0.025, 8);
+    for (const z of [-1.7, 1.6]) {
+      for (const x of [-2.48, -1.65, -0.82, 0, 0.82, 1.65, 2.48]) {
+        const bolt = new THREE.Mesh(boltGeometry, brass);
+        bolt.position.set(x, 0.715, z);
+        root.add(bolt);
+      }
+    }
+    for (const x of [-2.66, 2.66]) {
+      for (const z of [-1.25, -0.55, 0.15, 0.85, 1.45]) {
+        const bolt = new THREE.Mesh(boltGeometry, brass);
+        bolt.position.set(x, 0.715, z);
+        root.add(bolt);
+      }
+    }
+
+    for (const side of [-1, 1]) {
+      const cabinet = new THREE.Group();
+      cabinet.position.set(side * 2.96, 1.48, 1.04);
+      const casing = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.94, 0.86), agedMetal);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.78, 0.7), darkMetal);
+      door.position.x = -side * 0.125;
+      cabinet.add(casing, door);
+      for (let index = 0; index < 4; index += 1) {
+        const fuse = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.1, 0.1), index % 2 ? warning : brass);
+        fuse.position.set(-side * 0.15, 0.23 - index * 0.15, -0.2 + (index % 2) * 0.38);
+        cabinet.add(fuse);
+      }
+      const handle = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.013, 6, 14, Math.PI), brass);
+      handle.position.set(-side * 0.16, -0.05, 0.22);
+      handle.rotation.y = Math.PI / 2;
+      handle.rotation.z = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+      cabinet.add(handle);
+      root.add(cabinet);
+
+      const gauge = new THREE.Group();
+      gauge.position.set(side * 2.83, 1.72, -0.58);
+      const gaugeBody = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.12, 24), agedMetal);
+      gaugeBody.rotation.z = Math.PI / 2;
+      const gaugeFace = new THREE.Mesh(new THREE.CircleGeometry(0.18, 24), new THREE.MeshStandardMaterial({ color: 0xb4a990, roughness: 0.95 }));
+      gaugeFace.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+      gaugeFace.position.x = -side * 0.066;
+      const needle = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.14, 0.012), new THREE.MeshStandardMaterial({ color: 0x5c1714, roughness: 0.8 }));
+      needle.position.x = -side * 0.075;
+      needle.rotation.z = side * 0.64;
+      gauge.add(gaugeBody, gaugeFace, needle);
+      root.add(gauge);
+
+      const fan = new THREE.Group();
+      fan.position.set(side * 2.84, 2.13, 2.6);
+      fan.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+      const fanRim = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.045, 9, 28), agedMetal);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.09, 12), darkMetal);
+      hub.rotation.x = Math.PI / 2;
+      fan.add(fanRim, hub);
+      for (let bladeIndex = 0; bladeIndex < 6; bladeIndex += 1) {
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.23, 0.025), darkMetal);
+        blade.rotation.z = bladeIndex * Math.PI / 3;
+        blade.translateY(0.12);
+        fan.add(blade);
+      }
+      this.ventilationFans.push(fan);
+      root.add(fan);
+
+      const beaconHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.08, 12), darkMetal);
+      beaconHousing.position.set(side * 2.72, 2.45, 0.02);
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), lampMaterial.clone());
+      beacon.scale.y = 0.72;
+      beacon.position.set(side * 2.72, 2.53, 0.02);
+      const beaconLight = new THREE.PointLight(0xff3a24, 2.4, 1.7, 2);
+      beaconLight.position.copy(beacon.position);
+      beaconLight.userData.phase = side < 0 ? 0 : Math.PI;
+      this.industrialLights.push(beaconLight);
+      root.add(beaconHousing, beacon, beaconLight);
+    }
+
+    for (const x of [-1.75, 1.75]) {
+      const grate = new THREE.Group();
+      grate.position.set(x, 0.065, 3.05);
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.035, 1.34), darkMetal);
+      grate.add(frame);
+      for (let index = -4; index <= 4; index += 1) {
+        const slot = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.045, 1.15), rubber);
+        slot.position.set(index * 0.13, 0.025, 0);
+        grate.add(slot);
+      }
+      root.add(grate);
+    }
+
+    for (let index = 0; index < 5; index += 1) {
+      const cable = new THREE.Mesh(new THREE.TorusGeometry(0.48 + index * 0.035, 0.018, 7, 30, Math.PI * 1.26), index % 2 ? rubber : darkMetal);
+      cable.position.set(-0.12 + index * 0.06, 2.74 - index * 0.025, -0.25 + index * 0.11);
+      cable.rotation.z = 0.76 + index * 0.04;
+      cable.rotation.y = Math.PI / 2;
+      root.add(cable);
+    }
+
+    root.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      node.castShadow = true;
+      node.receiveShadow = true;
+    });
+    this.scene.add(root);
   }
 
   private buildDealer(): void {
@@ -835,9 +978,9 @@ export class ThreeGame {
   private buildHealthMachine(): void {
     const group = new THREE.Group();
     group.name = "health-machine";
-    group.position.set(2.08, 0.84, -1.31);
-    group.rotation.y = -0.36;
-    group.rotation.x = -0.1;
+    group.position.set(2.43, 0.84, -0.2);
+    group.rotation.y = -0.72;
+    group.rotation.x = -0.12;
     const casing = new THREE.Mesh(
       new THREE.BoxGeometry(1.08, 0.43, 0.27),
       new THREE.MeshStandardMaterial({ map: this.loadTexture(ASSETS.textures.briefcaseSteel), color: 0x56504b, roughness: 0.83, metalness: 0.62 }),
@@ -882,6 +1025,12 @@ export class ThreeGame {
     context.lineTo(744, 104);
     context.stroke();
     this.healthTexture.needsUpdate = true;
+  }
+
+  private commitPendingShotHealth(event: Extract<GameEvent, { kind: "shot" }>): void {
+    if (event.shell !== "live" || !this.pendingHealthDraw) return;
+    this.drawHealth(this.pendingHealthDraw.state, this.pendingHealthDraw.localActor);
+    this.pendingHealthDraw = null;
   }
 
   private buildShellRack(): void {
@@ -1173,31 +1322,38 @@ export class ThreeGame {
             : item === "jammer" ? 1.24
               : item === "remote" ? 1.08
                 : 0.84;
-    prop.scale.setScalar(propScale);
+    prop.scale.setScalar(propScale * 0.72);
     this.scene.add(prop);
     const carrier = this.createHand(new THREE.MeshStandardMaterial({
       color: actorIsLocal ? 0xb58a7b : 0xc09382,
       roughness: 0.98,
     }));
-    const sleeveVector = new THREE.Vector3(actorIsLocal ? -0.015 : 0.015, -0.015, actorIsLocal ? 0.4 : -0.46);
+    const sleeveVector = new THREE.Vector3(actorIsLocal ? -0.2 : 0.2, -0.36, actorIsLocal ? 0.12 : -0.14);
     const sleeve = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.069, 0.28, 5, 9),
+      new THREE.CapsuleGeometry(0.052, 0.31, 5, 9),
       new THREE.MeshStandardMaterial({ color: actorIsLocal ? 0x171718 : 0x080707, roughness: 0.94 }),
     );
     sleeve.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), sleeveVector.clone().normalize());
     sleeve.position.copy(sleeveVector).multiplyScalar(0.56);
     sleeve.castShadow = true;
     const cuff = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.083, 0.074, 0.105, 10),
+      new THREE.CylinderGeometry(0.064, 0.058, 0.09, 10),
       new THREE.MeshStandardMaterial({ color: actorIsLocal ? 0x302c2d : 0x171212, roughness: 0.82 }),
     );
     cuff.quaternion.copy(sleeve.quaternion);
     cuff.position.copy(sleeveVector).multiplyScalar(0.16);
     cuff.castShadow = true;
     carrier.add(sleeve, cuff);
-    const carrierScale = actorIsLocal ? 1.12 : 1.16;
+    const carrierScale = actorIsLocal ? 0.96 : 1.02;
     carrier.scale.setScalar(carrierScale);
     carrier.rotation.set(-0.48, actorIsLocal ? -0.18 : 0.2, actorIsLocal ? 0.2 : -0.18);
+    const carrierGripRotation = carrier.rotation.clone();
+    const carrierApproachRotation = carrierGripRotation.clone();
+    carrierApproachRotation.x += 0.34;
+    carrierApproachRotation.y += actorIsLocal ? -0.22 : 0.22;
+    carrierApproachRotation.z += actorIsLocal ? 0.26 : -0.26;
+    carrier.rotation.copy(carrierApproachRotation);
+    carrier.scale.setScalar(0.001);
     const closeGrip = item === "beer" || item === "cigarettes" || item === "expiredMedicine" || item === "burnerPhone";
     const carrierOffset = new THREE.Vector3(
       actorIsLocal ? (closeGrip ? -0.035 : -0.07) : (closeGrip ? 0.035 : 0.07),
@@ -1235,12 +1391,24 @@ export class ThreeGame {
       this.onItemCue(item, "pickup");
       await this.tween(actorIsLocal ? 880 : 1050, (amount) => {
         const eased = this.easeInOut(amount);
+        const handBlend = this.easeInOut(THREE.MathUtils.clamp(amount / 0.42, 0, 1));
         prop.position.lerpVectors(start, focus, eased);
         prop.position.y += Math.sin(amount * Math.PI) * 0.16;
+        prop.scale.setScalar(THREE.MathUtils.lerp(propScale * 0.72, propScale, handBlend));
         prop.rotation.y = baseRotation.y + amount * (actorIsLocal ? 0.66 : -0.58);
         prop.rotation.x = baseRotation.x + Math.sin(amount * Math.PI) * 0.14;
-        setCarrier();
-        carrier.rotation.z = (actorIsLocal ? 0.2 : -0.18) + amount * (actorIsLocal ? -0.1 : 0.1);
+        const approachOffset = carrierOffset.clone().add(new THREE.Vector3(
+          actorIsLocal ? -0.16 * (1 - handBlend) : 0.16 * (1 - handBlend),
+          -0.22 * (1 - handBlend),
+          actorIsLocal ? 0.22 * (1 - handBlend) : -0.22 * (1 - handBlend),
+        ));
+        setCarrier(approachOffset);
+        carrier.scale.setScalar(Math.max(0.001, carrierScale * handBlend));
+        carrier.rotation.set(
+          THREE.MathUtils.lerp(carrierApproachRotation.x, carrierGripRotation.x, handBlend),
+          THREE.MathUtils.lerp(carrierApproachRotation.y, carrierGripRotation.y, handBlend),
+          THREE.MathUtils.lerp(carrierApproachRotation.z, carrierGripRotation.z + amount * (actorIsLocal ? -0.1 : 0.1), handBlend),
+        );
         this.camera.position.lerpVectors(cameraStart, cameraClose, eased);
         this.lookTarget.lerpVectors(lookStart, cameraFocus, eased);
       });
@@ -1444,14 +1612,27 @@ export class ThreeGame {
 
       await wait(260);
       const finish = prop.position.clone();
+      const finishScale = prop.scale.x;
       const exit = start.clone().add(new THREE.Vector3(actorIsLocal ? -0.35 : 0.35, -0.28, actorIsLocal ? 0.32 : -0.32));
       await this.tween(780, (amount) => {
         const eased = this.easeInOut(amount);
+        const handBlend = 1 - this.easeInOut(THREE.MathUtils.clamp((amount - 0.18) / 0.82, 0, 1));
         prop.position.lerpVectors(finish, exit, eased);
         prop.rotation.x += 0.006;
-        setCarrier();
-        carrier.scale.setScalar(carrierScale * (1 - eased * 0.08));
-        effectRoot.scale.setScalar(1 - eased * 0.08);
+        prop.scale.setScalar(THREE.MathUtils.lerp(finishScale, propScale * 0.62, eased));
+        const releaseOffset = carrierOffset.clone().add(new THREE.Vector3(
+          actorIsLocal ? -0.2 * (1 - handBlend) : 0.2 * (1 - handBlend),
+          -0.26 * (1 - handBlend),
+          actorIsLocal ? 0.25 * (1 - handBlend) : -0.25 * (1 - handBlend),
+        ));
+        setCarrier(releaseOffset);
+        carrier.scale.setScalar(Math.max(0.001, carrierScale * handBlend));
+        carrier.rotation.set(
+          THREE.MathUtils.lerp(carrierApproachRotation.x, carrierGripRotation.x, handBlend),
+          THREE.MathUtils.lerp(carrierApproachRotation.y, carrierGripRotation.y, handBlend),
+          THREE.MathUtils.lerp(carrierApproachRotation.z, carrierGripRotation.z, handBlend),
+        );
+        effectRoot.scale.setScalar(THREE.MathUtils.lerp(0.82, 1, handBlend));
         this.camera.position.lerpVectors(cameraClose, cameraStart, eased);
         this.lookTarget.lerpVectors(cameraFocus, lookStart, eased);
       });
@@ -1502,7 +1683,10 @@ export class ThreeGame {
   }
 
   private async animateShot(event: Extract<GameEvent, { kind: "shot" }>, localActor: Actor): Promise<void> {
-    if (!this.shotgun) return;
+    if (!this.shotgun) {
+      this.commitPendingShotHealth(event);
+      return;
+    }
     while (this.animationBusy) await wait(60);
     this.animationBusy = true;
     const shotSequenceStarted = performance.now();
@@ -1559,38 +1743,70 @@ export class ThreeGame {
     const armDrop = actorIsLocal ? -0.34 : -0.2;
     attachForearm(gripHand, new THREE.Vector3(gripReach * armSign, armDrop, 0));
     attachForearm(pumpHand, new THREE.Vector3(pumpReach * armSign, armDrop - 0.02, 0));
-    gripHand.scale.setScalar(actorIsLocal ? (selfShot ? 0.86 : 0.94) : 0.68);
-    pumpHand.scale.setScalar(actorIsLocal ? (selfShot ? 0.76 : 0.9) : 0.66);
+    const gripTargetScale = actorIsLocal ? (selfShot ? 0.86 : 0.94) : 0.68;
+    const pumpTargetScale = actorIsLocal ? (selfShot ? 0.76 : 0.9) : 0.66;
+    gripHand.scale.setScalar(0.001);
+    pumpHand.scale.setScalar(0.001);
     gripHand.rotation.set(-0.08, 0, actorIsLocal ? 0.14 : -0.14);
     pumpHand.rotation.set(0.06, 0, actorIsLocal ? -0.1 : 0.1);
     const gripRestRotation = gripHand.rotation.clone();
     const pumpRestRotation = pumpHand.rotation.clone();
+    const gripApproachRotation = gripRestRotation.clone();
+    const pumpApproachRotation = pumpRestRotation.clone();
+    gripApproachRotation.x += 0.28;
+    gripApproachRotation.z += actorIsLocal ? 0.22 : -0.22;
+    pumpApproachRotation.x += 0.24;
+    pumpApproachRotation.z += actorIsLocal ? -0.2 : 0.2;
+    gripHand.rotation.copy(gripApproachRotation);
+    pumpHand.rotation.copy(pumpApproachRotation);
     gun.add(gripHand, pumpHand);
-    const positionHands = (pumpOffset = 0) => {
+    const positionHands = (pumpOffset = 0, actionBlend = 1) => {
       gripHand.position.set(0.02, 0.025, 0);
       pumpHand.position.set((actorIsLocal && selfShot ? 0.22 : actorIsLocal ? 0.5 : 0.34) + pumpOffset, 0.02, 0);
+      const retreat = 1 - actionBlend;
+      gripHand.position.y -= retreat * 0.18;
+      pumpHand.position.y -= retreat * 0.2;
+      gripHand.position.z += (actorIsLocal ? 0.18 : -0.18) * retreat;
+      pumpHand.position.z += (actorIsLocal ? 0.2 : -0.2) * retreat;
+      gripHand.scale.setScalar(Math.max(0.001, gripTargetScale * actionBlend));
+      pumpHand.scale.setScalar(Math.max(0.001, pumpTargetScale * actionBlend));
     };
     const dealerBoneScales = !actorIsLocal ? {
       left: this.dealerHandBones.left?.scale.clone(),
       right: this.dealerHandBones.right?.scale.clone(),
     } : null;
-    if (!actorIsLocal) {
-      this.dealerHandBones.left?.scale.setScalar(0.001);
-      this.dealerHandBones.right?.scale.setScalar(0.001);
-    }
+    const blendDealerHands = (actionBlend: number): void => {
+      if (actorIsLocal || !dealerBoneScales) return;
+      const hidden = new THREE.Vector3(0.001, 0.001, 0.001);
+      if (dealerBoneScales.left) this.dealerHandBones.left?.scale.lerpVectors(dealerBoneScales.left, hidden, actionBlend);
+      if (dealerBoneScales.right) this.dealerHandBones.right?.scale.lerpVectors(dealerBoneScales.right, hidden, actionBlend);
+    };
     const muzzlePosition = () => new THREE.Vector3(0.82, 0.015, 0).applyQuaternion(gun.quaternion).add(gun.position);
-    positionHands();
+    positionHands(0, 0);
+    blendDealerHands(0);
     this.onMechanicalCue("gunFoley");
 
     await this.tween(actorIsLocal ? 1150 : 1350, (amount) => {
       const eased = this.easeInOut(amount);
+      const handBlend = this.easeInOut(THREE.MathUtils.clamp(amount / 0.46, 0, 1));
       gun.position.lerpVectors(startPosition, targetPosition, eased);
       gun.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, eased);
       this.muzzleLight.position.copy(muzzlePosition());
       this.muzzleLight.intensity = eased * 3.2;
       this.camera.position.lerpVectors(cameraStart, tensionCamera, eased);
       this.lookTarget.lerpVectors(lookStart, tensionLook, eased * 0.72);
-      positionHands();
+      positionHands(0, handBlend);
+      gripHand.rotation.set(
+        THREE.MathUtils.lerp(gripApproachRotation.x, gripRestRotation.x, handBlend),
+        THREE.MathUtils.lerp(gripApproachRotation.y, gripRestRotation.y, handBlend),
+        THREE.MathUtils.lerp(gripApproachRotation.z, gripRestRotation.z, handBlend),
+      );
+      pumpHand.rotation.set(
+        THREE.MathUtils.lerp(pumpApproachRotation.x, pumpRestRotation.x, handBlend),
+        THREE.MathUtils.lerp(pumpApproachRotation.y, pumpRestRotation.y, handBlend),
+        THREE.MathUtils.lerp(pumpApproachRotation.z, pumpRestRotation.z, handBlend),
+      );
+      blendDealerHands(handBlend);
       if (!actorIsLocal && this.dealer && dealerStartPosition && dealerStartRotation) {
         this.dealer.position.set(dealerStartPosition.x, dealerStartPosition.y - eased * 0.07, dealerStartPosition.z + eased * 0.16);
         this.dealer.rotation.set(dealerStartRotation.x + eased * 0.06, dealerStartRotation.y, dealerStartRotation.z + (selfShot ? 0.045 : -0.035) * eased);
@@ -1634,6 +1850,7 @@ export class ThreeGame {
 
     this.muzzleLight.position.copy(muzzlePosition());
     this.onShotFire(event);
+    this.commitPendingShotHealth(event);
     this.shotgunTargetScale = 1;
     if (event.shell === "live") {
       this.muzzleLight.intensity = 52;
@@ -1681,11 +1898,23 @@ export class ThreeGame {
     const dealerReturnRotation = this.dealer?.rotation.clone();
     await this.tween(returnDuration, (amount) => {
       const eased = this.ease(amount);
+      const actionBlend = 1 - this.easeInOut(THREE.MathUtils.clamp((amount - 0.42) / 0.58, 0, 1));
       gun.position.lerpVectors(returnPosition, startPosition, eased);
       gun.quaternion.slerpQuaternions(returnQuaternion, startQuaternion, eased);
       this.camera.position.lerpVectors(returnCamera, cameraStart, eased);
       this.lookTarget.lerpVectors(returnLook, lookStart, eased);
-      positionHands();
+      positionHands(0, actionBlend);
+      gripHand.rotation.set(
+        THREE.MathUtils.lerp(gripApproachRotation.x, gripRestRotation.x, actionBlend),
+        THREE.MathUtils.lerp(gripApproachRotation.y, gripRestRotation.y, actionBlend),
+        THREE.MathUtils.lerp(gripApproachRotation.z, gripRestRotation.z, actionBlend),
+      );
+      pumpHand.rotation.set(
+        THREE.MathUtils.lerp(pumpApproachRotation.x, pumpRestRotation.x, actionBlend),
+        THREE.MathUtils.lerp(pumpApproachRotation.y, pumpRestRotation.y, actionBlend),
+        THREE.MathUtils.lerp(pumpApproachRotation.z, pumpRestRotation.z, actionBlend),
+      );
+      blendDealerHands(actionBlend);
       if (this.dealer && dealerStartPosition && dealerStartRotation && dealerReturnPosition && dealerReturnRotation) {
         this.dealer.position.lerpVectors(dealerReturnPosition, dealerStartPosition, eased);
         this.dealer.rotation.set(
@@ -1948,15 +2177,20 @@ export class ThreeGame {
       sleeve.position.z = 0.25;
       sleeve.castShadow = true;
       hand.add(sleeve);
-      hand.scale.setScalar(1.42);
+      hand.scale.setScalar(0.001);
       this.scene.add(hand);
     }
     const dealerBoneScales = {
       left: this.dealerHandBones.left?.scale.clone(),
       right: this.dealerHandBones.right?.scale.clone(),
     };
-    this.dealerHandBones.left?.scale.setScalar(0.001);
-    this.dealerHandBones.right?.scale.setScalar(0.001);
+    const hiddenHandScale = new THREE.Vector3(0.001, 0.001, 0.001);
+    const blendDealerLoadHands = (actionBlend: number): void => {
+      gripHand.scale.setScalar(Math.max(0.001, 1.42 * actionBlend));
+      loadingHand.scale.setScalar(Math.max(0.001, 1.42 * actionBlend));
+      if (dealerBoneScales.left) this.dealerHandBones.left?.scale.lerpVectors(dealerBoneScales.left, hiddenHandScale, actionBlend);
+      if (dealerBoneScales.right) this.dealerHandBones.right?.scale.lerpVectors(dealerBoneScales.right, hiddenHandScale, actionBlend);
+    };
     const gripLocal = new THREE.Vector3(-0.27, -0.015, 0.045);
     const loaderRestLocal = new THREE.Vector3(-0.06, 0.16, 0.1);
     const positionHands = (loaderLocal = loaderRestLocal) => {
@@ -1970,9 +2204,12 @@ export class ThreeGame {
       loadingHand.rotateZ(-0.28);
     };
 
+    positionHands();
+    blendDealerLoadHands(0);
     this.onMechanicalCue("gunFoley");
     await this.tween(860, (amount) => {
       const eased = this.easeInOut(amount);
+      const handBlend = this.easeInOut(THREE.MathUtils.clamp(amount / 0.48, 0, 1));
       gun.position.lerpVectors(gunStartPosition, loadingPosition, eased);
       gun.quaternion.slerpQuaternions(gunStartQuaternion, loadingQuaternion, eased);
       dealer.position.set(
@@ -1984,6 +2221,10 @@ export class ThreeGame {
       this.camera.position.lerpVectors(cameraStart, new THREE.Vector3(0.2, 1.9, 2.72), eased);
       this.lookTarget.lerpVectors(lookStart, new THREE.Vector3(0.1, 0.88, -1.12), eased);
       positionHands();
+      const retreat = 1 - handBlend;
+      gripHand.position.y -= retreat * 0.2;
+      loadingHand.position.y -= retreat * 0.22;
+      blendDealerLoadHands(handBlend);
     });
 
     this.shellRackShells.updateMatrixWorld(true);
@@ -1994,36 +2235,44 @@ export class ThreeGame {
       const startQuaternion = round.quaternion.clone();
       const startScale = round.scale.clone();
       const insertLocal = new THREE.Vector3(-0.09, 0.055, 0.055);
-      const handStart = startPosition.clone().add(new THREE.Vector3(index % 2 ? 0.07 : -0.05, 0.1, 0.08));
-      loadingHand.visible = true;
+      const handRest = loadingHand.position.clone();
+      const pickupPosition = startPosition.clone().add(new THREE.Vector3(index % 2 ? 0.07 : -0.05, 0.1, 0.08));
       let cuePlayed = false;
-      await this.tween(360, (amount) => {
-        const eased = this.easeInOut(amount);
+      await this.tween(620, (amount) => {
+        const approach = this.easeInOut(THREE.MathUtils.clamp(amount / 0.28, 0, 1));
+        const carry = this.easeInOut(THREE.MathUtils.clamp((amount - 0.28) / 0.72, 0, 1));
         const insertPosition = insertLocal.clone().applyQuaternion(gun.quaternion).add(gun.position);
-        round.position.lerpVectors(startPosition, insertPosition, eased);
-        round.position.y += Math.sin(amount * Math.PI) * (0.18 + Math.min(index, 4) * 0.012);
-        round.quaternion.slerpQuaternions(startQuaternion, gun.quaternion, eased);
-        round.rotateZ(Math.PI / 2 * eased);
-        loadingHand.position.lerpVectors(handStart, insertPosition.clone().add(new THREE.Vector3(0.06, 0.055, 0.03)), eased);
+        round.position.lerpVectors(startPosition, insertPosition, carry);
+        round.position.y += Math.sin(carry * Math.PI) * (0.18 + Math.min(index, 4) * 0.012);
+        round.quaternion.slerpQuaternions(startQuaternion, gun.quaternion, carry);
+        round.rotateZ(Math.PI / 2 * carry);
+        if (amount < 0.28) loadingHand.position.lerpVectors(handRest, pickupPosition, approach);
+        else loadingHand.position.lerpVectors(pickupPosition, insertPosition.clone().add(new THREE.Vector3(0.06, 0.055, 0.03)), carry);
         loadingHand.quaternion.copy(gun.quaternion);
         loadingHand.rotateX(-0.62);
         loadingHand.rotateZ(-0.32);
         gripHand.position.copy(gripLocal).applyQuaternion(gun.quaternion).add(gun.position);
-        if (!cuePlayed && amount > 0.67) {
+        if (!cuePlayed && carry > 0.67) {
           cuePlayed = true;
           this.onMechanicalCue("loadShell");
         }
-        const insertFade = THREE.MathUtils.clamp((amount - 0.88) / 0.12, 0, 1);
+        const insertFade = THREE.MathUtils.clamp((carry - 0.86) / 0.14, 0, 1);
         round.scale.copy(startScale).multiplyScalar(1 - insertFade * 0.48);
       });
       round.visible = false;
-      loadingHand.visible = false;
       this.scene.remove(round);
       this.disposeUniqueObject(round);
-      await wait(85);
+      const releaseStart = loadingHand.position.clone();
+      const restWorld = loaderRestLocal.clone().applyQuaternion(gun.quaternion).add(gun.position);
+      await this.tween(180, (amount) => {
+        const eased = this.easeInOut(amount);
+        loadingHand.position.lerpVectors(releaseStart, restWorld, eased);
+        loadingHand.quaternion.copy(gun.quaternion);
+        loadingHand.rotateX(THREE.MathUtils.lerp(-0.62, -0.5, eased));
+        loadingHand.rotateZ(THREE.MathUtils.lerp(-0.32, -0.28, eased));
+      });
     }
 
-    loadingHand.visible = true;
     positionHands(new THREE.Vector3(0.24, 0.02, 0.055));
     this.onMechanicalCue("rackForward");
     await this.tween(360, (amount) => {
@@ -2047,6 +2296,7 @@ export class ThreeGame {
     const returnDealerRotation = dealer.rotation.clone();
     await this.tween(900, (amount) => {
       const eased = this.easeInOut(amount);
+      const handBlend = 1 - this.easeInOut(THREE.MathUtils.clamp((amount - 0.36) / 0.64, 0, 1));
       gun.position.lerpVectors(returnPosition, gunStartPosition, eased);
       gun.quaternion.slerpQuaternions(returnQuaternion, gunStartQuaternion, eased);
       dealer.position.lerpVectors(returnDealerPosition, dealerStartPosition, eased);
@@ -2058,9 +2308,10 @@ export class ThreeGame {
       this.camera.position.lerpVectors(new THREE.Vector3(0.2, 1.9, 2.72), cameraStart, eased);
       this.lookTarget.lerpVectors(new THREE.Vector3(0.1, 0.88, -1.12), lookStart, eased);
       positionHands();
-      const handScale = 1.42 * (1 - eased * 0.12);
-      gripHand.scale.setScalar(handScale);
-      loadingHand.scale.setScalar(handScale);
+      const retreat = 1 - handBlend;
+      gripHand.position.y -= retreat * 0.2;
+      loadingHand.position.y -= retreat * 0.22;
+      blendDealerLoadHands(handBlend);
     });
     gun.position.copy(gunStartPosition);
     gun.quaternion.copy(gunStartQuaternion);
@@ -2297,6 +2548,11 @@ export class ThreeGame {
     }
     const clubHaze = this.introWorld.scene.getObjectByName("club-haze");
     if (clubHaze) clubHaze.rotation.y = Math.sin(elapsed * 0.14) * 0.07;
+    for (const [index, fan] of this.ventilationFans.entries()) fan.rotation.z = elapsed * (index % 2 ? -1.25 : 1.08);
+    for (const light of this.industrialLights) {
+      const phase = Number(light.userData.phase ?? 0);
+      light.intensity = 1.4 + Math.max(0, Math.sin(elapsed * 3.2 + phase)) * 4.6;
+    }
     const dust = this.scene.getObjectByName("dust");
     if (dust) dust.rotation.y = elapsed * 0.018;
     if (this.dealer && !this.animationBusy) {
@@ -2362,8 +2618,9 @@ export class ThreeGame {
     this.homeCamera.set(0, portrait ? 2.48 : 2.08, portrait ? 4.12 : 3.18);
     const healthMachine = this.scene.getObjectByName("health-machine");
     if (healthMachine) {
-      healthMachine.position.x = portrait ? 0.98 : 1.72;
-      healthMachine.scale.setScalar(portrait ? 0.78 : 1);
+      healthMachine.position.x = portrait ? 1.72 : 2.43;
+      healthMachine.position.z = portrait ? -0.42 : -0.2;
+      healthMachine.scale.setScalar(portrait ? 0.72 : 1);
     }
     const shellRack = this.scene.getObjectByName("shell-rack");
     if (shellRack) shellRack.position.x = portrait ? 0.66 : 1.04;

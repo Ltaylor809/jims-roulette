@@ -2,7 +2,7 @@
   "name": "jims-roulette",
   "productName": "Jims Roulette",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Jims Roulette desktop game and self-updating launcher",
   "author": "Ltaylor809",
   "main": "electron/main.mjs",

@@ -131,6 +131,7 @@ game.onHover = (interaction) => {
 };
 game.onShotFire = (event) => {
   audio.fire(event.shell);
+  ui.commitShotHealth(event);
   ui.notify(event);
 };
 game.onBlackout = (active) => ui.setBlackout(active);
