@@ -1,6 +1,6 @@
 # Jims Roulette redistributable asset ledger
 
-This file records the assets with independent redistribution licenses. It does not cover anything under `public/assets/local-only/`; see the repository-root `LOCAL_ONLY_ASSETS.md` for those owner-supplied reference files.
+This file records assets with independent redistribution licenses. Owner-supplied assets under `public/assets/local-only/` are covered separately by the authorization recorded in the repository-root `LOCAL_ONLY_ASSETS.md`.
 
 ## 3D models
 
@@ -21,6 +21,6 @@ This file records the assets with independent redistribution licenses. It does n
 - **Click Sound** — curato, CC0. <https://opengameart.org/content/click-sound>
 - **Gunshots!** — dklon, CC BY 3.0. <https://opengameart.org/content/gunshots-0>
 
-## User-supplied archive boundary
+## Owner-supplied assets
 
-`Jims buckshot.zip` and `buckshot-decomp-public-main.zip` were inspected and a small local-only subset was imported for the owner's private build. Those files are explicitly outside this redistributable ledger and must be removed or replaced before publication.
+`Jims buckshot.zip`, `buckshot-decomp-public-main.zip`, and `Bass Killer.mp3` were supplied by the project owner. On 2026-07-21, the owner confirmed ownership and explicitly authorized public distribution of the selected files under `public/assets/local-only/` as part of Jims Roulette.

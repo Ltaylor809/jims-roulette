@@ -389,6 +389,23 @@ body::after {
   transition: opacity 180ms ease, transform 180ms ease;
 }
 .turn-banner.show { opacity: .85; transform: translate(-50%, 0); }
+.dealer-dialogue {
+  position: absolute;
+  top: 23%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  width: min(620px, calc(100vw - 44px));
+  color: #e2ded6;
+  text-align: center;
+  text-shadow: 0 2px 12px #000, 0 0 24px #000;
+  opacity: 0;
+  transform: translate(-50%, 7px);
+  transition: opacity 260ms ease, transform 340ms cubic-bezier(.2,.75,.25,1);
+}
+.dealer-dialogue span { color: #8c8179; font: 7px/1 ui-monospace, monospace; letter-spacing: .36em; }
+.dealer-dialogue strong { min-height: 18px; margin-top: 7px; font: 12px/1.35 ui-monospace, monospace; letter-spacing: .12em; }
+.dealer-dialogue.show { opacity: .92; transform: translate(-50%, 0); }
 .dialogue-strip {
   position: absolute;
   left: 50%;
@@ -408,7 +425,28 @@ body::after {
 }
 .dialogue-strip.show { opacity: 1; transform: translate(-50%, 0); }
 .shell-reveal { bottom: 11.5%; z-index: 4; }
-.event-toast { z-index: 3; }
+.event-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 10.2%;
+  z-index: 3;
+  display: grid;
+  min-width: min(390px, calc(100vw - 36px));
+  padding: 8px 22px 9px;
+  color: #d8d4cc;
+  background: linear-gradient(90deg, transparent, rgba(2,2,2,.92) 15%, rgba(2,2,2,.92) 85%, transparent);
+  text-align: center;
+  opacity: 0;
+  transform: translate(-50%, 7px);
+  transition: opacity 190ms ease, transform 250ms cubic-bezier(.2,.75,.25,1);
+}
+.event-toast::before, .event-toast::after { content: ""; position: absolute; top: 50%; width: 27px; height: 1px; background: #625b53; opacity: .55; }
+.event-toast::before { left: 0; }
+.event-toast::after { right: 0; }
+.event-toast span { color: #776f68; font: 6px/1 ui-monospace, monospace; letter-spacing: .32em; }
+.event-toast strong { margin-top: 4px; font: 9px/1.25 ui-monospace, monospace; letter-spacing: .12em; }
+.event-toast[data-kind="shot"] strong { color: #e1c7bc; }
+.event-toast.show { opacity: .94; transform: translate(-50%, 0); }
 
 .interaction-hint {
   position: absolute;

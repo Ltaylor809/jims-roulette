@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { MechanicalCue } from "../audio/AudioDirector";
-import type { Actor, GameEvent, GameState, ItemId, Shell } from "../game/simulation/types";
+import type { Actor, GameEvent, GameMode, GameState, ItemId, Shell } from "../game/simulation/types";
 import { ASSETS } from "./assets";
 import { buildIntroWorld, type IntroWorld } from "./IntroWorld";
 
@@ -46,8 +46,8 @@ export class ThreeGame {
   private readonly industrialLights: THREE.PointLight[] = [];
   private readonly ventilationFans: THREE.Group[] = [];
   private readonly roomEntryDoor = new THREE.Group();
-  private readonly homeCamera = new THREE.Vector3(0, 2.08, 3.18);
-  private readonly homeLook = new THREE.Vector3(0, 0.84, -0.72);
+  private readonly homeCamera = new THREE.Vector3(0, 2.2, 3.48);
+  private readonly homeLook = new THREE.Vector3(0, 0.76, -0.58);
   private readonly lookTarget = this.homeLook.clone();
   private readonly muzzleLight = new THREE.PointLight(0xffd4a0, 0, 7, 2);
   private readonly roomLightLeft = new THREE.SpotLight(0xffb58a, 21, 10, 0.52, 0.84, 1.5);
@@ -58,7 +58,10 @@ export class ThreeGame {
   private activeScene: THREE.Scene;
   private shotgun: THREE.Group | null = null;
   private dealer: THREE.Group | null = null;
+  private soloDealer: THREE.Group | null = null;
+  private multiplayerRival: THREE.Group | null = null;
   private dealerHandBones: { left?: THREE.Bone; right?: THREE.Bone } = {};
+  private dealerIdleHands: THREE.Group[] = [];
   private briefcase: THREE.Group | null = null;
   private hoveredInteraction: string | null = null;
   private lastChamberNumber = -1;
@@ -73,12 +76,13 @@ export class ThreeGame {
   private lastSuddenDeath: Record<Actor, boolean> = { player: false, dealer: false };
   private playerName = "JIM";
   private dealerRestY = 1.55;
+  private opponentMode: GameMode = "solo";
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance", alpha: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.91;
+    this.renderer.toneMappingExposure = 1.04;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.15));
@@ -99,6 +103,7 @@ export class ThreeGame {
 
     this.buildRoom();
     this.buildDealer();
+    this.buildMultiplayerRival();
     this.buildHealthMachine();
     this.buildShellRack();
     this.buildBriefcase();
@@ -153,6 +158,7 @@ export class ThreeGame {
   }
 
   sync(state: GameState, localActor: Actor): void {
+    this.setOpponentMode(state.mode);
     const healthState = {
       ...state,
       health: { ...state.health },
@@ -382,7 +388,7 @@ export class ThreeGame {
     const wood = this.loadTexture(ASSETS.textures.wood, [1.6, 1.15]);
 
     const tableBase = new THREE.Mesh(
-      new THREE.BoxGeometry(5.55, 0.28, 3.58),
+      new THREE.BoxGeometry(6.08, 0.28, 4.02),
       new THREE.MeshStandardMaterial({ map: wood, color: 0x4b2925, roughness: 0.9 }),
     );
     tableBase.position.set(0, 0.41, -0.05);
@@ -390,9 +396,20 @@ export class ThreeGame {
     tableBase.receiveShadow = true;
     this.scene.add(tableBase);
 
+    const outerFelt = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.82, 3.76),
+      new THREE.MeshStandardMaterial({ color: 0x625f50, roughness: 0.96, metalness: 0.01 }),
+    );
+    outerFelt.rotation.x = -Math.PI / 2;
+    outerFelt.position.set(0, 0.557, -0.04);
+    outerFelt.receiveShadow = true;
+    this.scene.add(outerFelt);
+
+    // Keep the supplied printed layout at its original dimensions while the
+    // unprinted felt apron gives every item more physical room.
     const tableSurface = new THREE.Mesh(
       new THREE.PlaneGeometry(5.22, 3.3),
-      new THREE.MeshStandardMaterial({ map: felt, color: 0xa29f87, roughness: 0.95, metalness: 0.01 }),
+      new THREE.MeshStandardMaterial({ map: felt, color: 0xb8b39a, roughness: 0.94, metalness: 0.01 }),
     );
     tableSurface.rotation.x = -Math.PI / 2;
     tableSurface.position.set(0, 0.558, -0.04);
@@ -401,7 +418,7 @@ export class ThreeGame {
 
     const railMaterial = new THREE.MeshStandardMaterial({ map: rust, color: 0x3a2522, roughness: 0.88, metalness: 0.34 });
     for (const [x, z, width, depth] of [
-      [0, -1.74, 5.45, 0.14], [0, 1.64, 5.45, 0.14], [-2.69, -0.05, 0.14, 3.35], [2.69, -0.05, 0.14, 3.35],
+      [0, -1.98, 5.98, 0.14], [0, 1.88, 5.98, 0.14], [-2.98, -0.05, 0.14, 3.85], [2.98, -0.05, 0.14, 3.85],
     ] as const) {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(width, 0.14, depth), railMaterial);
       rail.position.set(x, 0.63, z);
@@ -594,8 +611,12 @@ export class ThreeGame {
     this.scene.add(this.roomLightLeft, this.roomLightRight, this.roomLightLeft.target, this.roomLightRight.target);
     this.buildSpotlightHousing(-1.0, 2.08, -1.82, metalMaterial);
     this.buildSpotlightHousing(1.0, 2.08, -1.82, metalMaterial);
-    this.scene.add(new THREE.HemisphereLight(0x674a49, 0x100707, 1.18));
-    const playerSideFill = new THREE.PointLight(0xd8ada2, 7.5, 5.2, 1.8);
+    this.scene.add(new THREE.HemisphereLight(0x826966, 0x160b09, 1.48));
+    const tableFill = new THREE.RectAreaLight(0xffcfb2, 4.4, 5.6, 3.5);
+    tableFill.position.set(0, 2.72, 0.08);
+    tableFill.rotation.x = -Math.PI / 2;
+    this.scene.add(tableFill);
+    const playerSideFill = new THREE.PointLight(0xe4bcb0, 9.2, 5.8, 1.75);
     playerSideFill.position.set(0, 2.45, 2.4);
     this.scene.add(playerSideFill);
     const dealerLight = new THREE.PointLight(0xff8068, 14, 4.2, 1.65);
@@ -825,7 +846,112 @@ export class ThreeGame {
       dealer.add(hand);
     }
     this.dealer = dealer;
+    this.soloDealer = dealer;
+    dealer.userData.restY = this.dealerRestY;
     this.scene.add(dealer);
+  }
+
+  private buildMultiplayerRival(): void {
+    const rival = new THREE.Group();
+    rival.name = "multiplayer-rival";
+    rival.position.set(0, 0.32, -2.3);
+    rival.userData.restY = rival.position.y;
+    rival.visible = false;
+
+    const coat = new THREE.MeshStandardMaterial({ color: 0x111315, roughness: 0.94, metalness: 0.04 });
+    const coatEdge = new THREE.MeshStandardMaterial({ color: 0x2e2928, roughness: 0.86, metalness: 0.12 });
+    const hood = new THREE.MeshStandardMaterial({ color: 0x08090a, roughness: 0.98 });
+    const mask = new THREE.MeshStandardMaterial({ color: 0x393b3a, roughness: 0.54, metalness: 0.66 });
+    const glass = new THREE.MeshStandardMaterial({ color: 0x17241f, emissive: 0x183d2d, emissiveIntensity: 0.36, roughness: 0.18, metalness: 0.18 });
+    const skin = new THREE.MeshStandardMaterial({ color: 0x9a7064, roughness: 0.98 });
+
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.58, 7, 12), coat);
+    torso.position.set(0, 0.68, 0);
+    torso.scale.set(1.04, 1, 0.72);
+    rival.add(torso);
+
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.56, 0.18), coatEdge);
+    chest.position.set(0, 0.74, 0.19);
+    chest.rotation.x = -0.07;
+    rival.add(chest);
+    for (const x of [-0.19, 0.19]) {
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.7, 0.035), mask);
+      strap.position.set(x, 0.75, 0.295);
+      strap.rotation.z = x < 0 ? -0.08 : 0.08;
+      rival.add(strap);
+    }
+
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.065, 8, 22, Math.PI * 1.45), coatEdge);
+    collar.position.set(0, 1.14, 0.06);
+    collar.rotation.set(Math.PI / 2, 0, -Math.PI * 0.72);
+    rival.add(collar);
+
+    const hoodShell = new THREE.Mesh(new THREE.SphereGeometry(0.33, 18, 14), hood);
+    hoodShell.position.set(0, 1.39, 0.02);
+    hoodShell.scale.set(0.91, 1.08, 0.82);
+    rival.add(hoodShell);
+
+    const facePlate = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.225, 0.13, 8), mask);
+    facePlate.position.set(0, 1.38, 0.265);
+    facePlate.rotation.x = Math.PI / 2;
+    facePlate.scale.y = 1.08;
+    rival.add(facePlate);
+    for (const x of [-0.105, 0.105]) {
+      const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.073, 0.073, 0.035, 18), glass);
+      lens.position.set(x, 1.445, 0.345);
+      lens.rotation.x = Math.PI / 2;
+      rival.add(lens);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.078, 0.012, 8, 20), mask);
+      rim.position.set(x, 1.445, 0.368);
+      rival.add(rim);
+    }
+    const respirator = new THREE.Mesh(new THREE.CylinderGeometry(0.086, 0.105, 0.14, 12), mask);
+    respirator.position.set(0, 1.28, 0.385);
+    respirator.rotation.x = Math.PI / 2;
+    rival.add(respirator);
+    for (let index = -2; index <= 2; index += 1) {
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.07, 0.012), glass);
+      vent.position.set(index * 0.028, 1.28, 0.462);
+      rival.add(vent);
+    }
+
+    const segment = (start: THREE.Vector3, end: THREE.Vector3, radius: number): THREE.Mesh => {
+      const direction = end.clone().sub(start);
+      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(radius, Math.max(0.05, direction.length() - radius * 2), 5, 9), coat);
+      arm.position.copy(start).add(end).multiplyScalar(0.5);
+      arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+      return arm;
+    };
+    for (const side of [-1, 1]) {
+      const shoulder = new THREE.Vector3(side * 0.34, 0.97, 0.04);
+      const elbow = new THREE.Vector3(side * 0.5, 0.56, 0.34);
+      const wrist = new THREE.Vector3(side * 0.48, 0.2, 0.66);
+      rival.add(segment(shoulder, elbow, 0.09), segment(elbow, wrist, 0.075));
+      const hand = this.createHand(skin);
+      hand.position.copy(wrist);
+      hand.rotation.set(-0.18, side < 0 ? -0.22 : 0.22, side < 0 ? -0.18 : 0.18);
+      hand.scale.setScalar(0.82);
+      rival.add(hand);
+    }
+
+    rival.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      node.castShadow = true;
+      node.receiveShadow = true;
+    });
+    this.multiplayerRival = rival;
+    this.scene.add(rival);
+    this.setOpponentMode(this.opponentMode);
+  }
+
+  private setOpponentMode(mode: GameMode): void {
+    this.opponentMode = mode;
+    if (this.soloDealer) this.soloDealer.visible = mode === "solo";
+    if (this.multiplayerRival) this.multiplayerRival.visible = mode === "multiplayer";
+    const active = mode === "multiplayer" ? this.multiplayerRival : this.soloDealer;
+    if (!active) return;
+    this.dealer = active;
+    this.dealerRestY = Number(active.userData.restY ?? active.position.y);
   }
 
   private installAuthoredDealer(authoredDealer: THREE.Group): void {
@@ -834,8 +960,14 @@ export class ThreeGame {
     }
     const dealerMap = this.loadTexture(ASSETS.dealerTexture);
     authoredDealer.traverse((node) => {
-      if (node instanceof THREE.Bone && node.name === "HandL") this.dealerHandBones.left = node;
-      if (node instanceof THREE.Bone && node.name === "HandR") this.dealerHandBones.right = node;
+      if (node instanceof THREE.Bone && node.name === "HandL") {
+        this.dealerHandBones.left = node;
+        node.scale.setScalar(0.001);
+      }
+      if (node instanceof THREE.Bone && node.name === "HandR") {
+        this.dealerHandBones.right = node;
+        node.scale.setScalar(0.001);
+      }
       if (!(node instanceof THREE.Mesh)) return;
       node.castShadow = true;
       node.receiveShadow = true;
@@ -853,12 +985,38 @@ export class ThreeGame {
 
     const wrapper = this.normalizeModel(authoredDealer, 1.95);
     wrapper.name = "dealer";
-    this.dealerRestY = 1.12;
-    wrapper.position.set(0, this.dealerRestY, -2.3);
+    wrapper.position.set(0, 1.12, -2.3);
+    wrapper.userData.restY = wrapper.position.y;
     wrapper.rotation.y = 0;
-    if (this.dealer) this.scene.remove(this.dealer);
-    this.dealer = wrapper;
+    this.dealerIdleHands = [];
+    const idleSkin = new THREE.MeshStandardMaterial({ color: 0xb88476, roughness: 0.98 });
+    const idleSleeve = new THREE.MeshStandardMaterial({ color: 0x060505, roughness: 0.96 });
+    for (const side of [-1, 1]) {
+      const hand = this.createHand(idleSkin);
+      hand.position.set(side * 0.47, -0.5, 0.74);
+      hand.rotation.set(-0.17, side < 0 ? -0.3 : 0.3, side < 0 ? -0.16 : 0.16);
+      hand.scale.setScalar(0.84);
+      hand.userData.restScale = 0.84;
+      const reach = new THREE.Vector3(side * -0.1, 0.18, -0.34);
+      const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.34, 5, 9), idleSleeve);
+      sleeve.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), reach.clone().normalize());
+      sleeve.position.copy(reach).multiplyScalar(0.52);
+      sleeve.castShadow = true;
+      hand.add(sleeve);
+      wrapper.add(hand);
+      this.dealerIdleHands.push(hand);
+    }
+    if (this.soloDealer) this.scene.remove(this.soloDealer);
+    this.soloDealer = wrapper;
     this.scene.add(wrapper);
+    this.setOpponentMode(this.opponentMode);
+  }
+
+  private blendDealerIdleHands(actionBlend: number): void {
+    for (const hand of this.dealerIdleHands) {
+      const restScale = Number(hand.userData.restScale ?? 0.84);
+      hand.scale.setScalar(THREE.MathUtils.lerp(restScale, 0.001, THREE.MathUtils.clamp(actionBlend, 0, 1)));
+    }
   }
 
   private installAuthoredShotgun(authoredPack: THREE.Group): void {
@@ -904,10 +1062,10 @@ export class ThreeGame {
     const itemMap = this.loadTexture(ASSETS.dealerItemsTexture);
     const emissionMap = this.loadTexture(ASSETS.dealerItemsEmission);
     const specs: { item: ItemId; matches: (name: string) => boolean; size: number }[] = [
-      { item: "magnifier", matches: (name) => name === "Magnifying_Glass", size: 0.4 },
-      { item: "cigarettes", matches: (name) => name === "Cigarettes" || name === "Cigarette_Armature", size: 0.32 },
-      { item: "handcuffs", matches: (name) => name === "Handcuffs" || name === "Handcuffs_Armature", size: 0.43 },
-      { item: "beer", matches: (name) => name === "Beer", size: 0.38 },
+      { item: "magnifier", matches: (name) => name === "Magnifying_Glass", size: 0.34 },
+      { item: "cigarettes", matches: (name) => name === "Cigarettes" || name === "Cigarette_Armature", size: 0.25 },
+      { item: "handcuffs", matches: (name) => name === "Handcuffs" || name === "Handcuffs_Armature", size: 0.36 },
+      { item: "beer", matches: (name) => name === "Beer", size: 0.34 },
     ];
     for (const spec of specs) {
       const root = new THREE.Group();
@@ -978,7 +1136,7 @@ export class ThreeGame {
   private buildHealthMachine(): void {
     const group = new THREE.Group();
     group.name = "health-machine";
-    group.position.set(2.43, 0.84, -0.2);
+    group.position.set(2.7, 0.84, -0.16);
     group.rotation.y = -0.72;
     group.rotation.x = -0.12;
     const casing = new THREE.Mesh(
@@ -1076,7 +1234,7 @@ export class ThreeGame {
 
   private buildBriefcase(): void {
     const group = new THREE.Group();
-    group.position.set(0, 0.62, 0.93);
+    group.position.set(0, 0.62, 1.13);
     const material = new THREE.MeshStandardMaterial({ map: this.loadTexture(ASSETS.textures.briefcaseCarbon), color: 0x3b3433, roughness: 0.68, metalness: 0.5 });
     const steel = new THREE.MeshStandardMaterial({ map: this.loadTexture(ASSETS.textures.briefcaseSteel), color: 0x5b514c, roughness: 0.72, metalness: 0.62 });
     const caseBottom = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.16, 0.72), material);
@@ -1118,12 +1276,12 @@ export class ThreeGame {
     this.localItems.clear();
     this.dealerItems.clear();
     const localSlots: THREE.Vector3Tuple[] = [
-      [-2.05, 0.59, 0.72], [-1.32, 0.59, 0.72], [1.32, 0.59, 0.72], [2.05, 0.59, 0.72],
-      [-2.05, 0.59, 1.25], [-1.32, 0.59, 1.25], [1.32, 0.59, 1.25], [2.05, 0.59, 1.25],
+      [-2.34, 0.59, 0.76], [-1.48, 0.59, 0.76], [1.48, 0.59, 0.76], [2.34, 0.59, 0.76],
+      [-2.34, 0.59, 1.4], [-1.48, 0.59, 1.4], [1.48, 0.59, 1.4], [2.34, 0.59, 1.4],
     ];
     const dealerSlots: THREE.Vector3Tuple[] = [
-      [-2.05, 0.59, -0.78], [-1.32, 0.59, -0.78], [1.32, 0.59, -0.78], [2.05, 0.59, -0.78],
-      [-2.05, 0.59, -1.3], [-1.32, 0.59, -1.3], [1.32, 0.59, -1.3], [2.05, 0.59, -1.3],
+      [-2.34, 0.59, -0.82], [-1.48, 0.59, -0.82], [1.48, 0.59, -0.82], [2.34, 0.59, -0.82],
+      [-2.34, 0.59, -1.48], [-1.48, 0.59, -1.48], [1.48, 0.59, -1.48], [2.34, 0.59, -1.48],
     ];
     this.populateItems(this.localItems, state.inventory[localActor], localSlots, true);
     this.populateItems(this.dealerItems, state.inventory[other(localActor)], dealerSlots, false);
@@ -1136,12 +1294,7 @@ export class ThreeGame {
       const instance = cloneSkeleton(template) as THREE.Group;
       instance.name = `${interactive ? "local" : "dealer"}-item:${item}`;
       instance.position.set(slots[index][0], 0, slots[index][2]);
-      instance.rotation.y = (index % 4 - 1.5) * 0.19 + (interactive ? 0 : Math.PI);
-      if (item === "handcuffs" || item === "magnifier") instance.rotation.y += 0.45;
-      if (item === "cigarettes") {
-        instance.rotation.x = interactive ? -Math.PI / 2 : Math.PI / 2;
-        instance.rotation.z = interactive ? -0.08 : 0.08;
-      }
+      instance.rotation.copy(this.itemTableRotation(item, interactive, index));
       instance.updateMatrixWorld(true);
       const bounds = new THREE.Box3().setFromObject(instance);
       instance.position.y += slots[index][1] - bounds.min.y + 0.006;
@@ -1150,11 +1303,89 @@ export class ThreeGame {
     });
   }
 
+  private itemTableRotation(item: ItemId, interactive: boolean, index: number): THREE.Euler {
+    const facing = interactive ? 0 : Math.PI;
+    const stagger = (index % 4 - 1.5) * 0.07;
+    const yaw: Partial<Record<ItemId, number>> = {
+      magnifier: -0.28,
+      cigarettes: 0.08,
+      handSaw: 0.2,
+      handcuffs: 0.32,
+      beer: -0.08,
+      burnerPhone: -0.16,
+      inverter: 0.12,
+      adrenaline: 0.24,
+      expiredMedicine: -0.1,
+      jammer: 0.06,
+      remote: -0.2,
+    };
+    return new THREE.Euler(
+      item === "cigarettes" ? (interactive ? -Math.PI / 2 : Math.PI / 2) : 0,
+      facing + (yaw[item] ?? 0) + stagger,
+      item === "cigarettes" ? (interactive ? -0.08 : 0.08) : 0,
+    );
+  }
+
+  private itemActionScale(item: ItemId): number {
+    const scales: Record<ItemId, number> = {
+      magnifier: 1.02,
+      cigarettes: 1.02,
+      handSaw: 0.96,
+      handcuffs: 0.96,
+      beer: 1.04,
+      burnerPhone: 1,
+      inverter: 1,
+      adrenaline: 1,
+      expiredMedicine: 1,
+      jammer: 1,
+      remote: 1,
+    };
+    return scales[item];
+  }
+
+  private itemActionRotation(item: ItemId, actorIsLocal: boolean): THREE.Euler {
+    const sign = actorIsLocal ? 1 : -1;
+    const rotations: Record<ItemId, THREE.Euler> = {
+      magnifier: new THREE.Euler(-0.08, sign * 0.32, sign * -0.12),
+      cigarettes: new THREE.Euler(-0.12, sign * 0.24, sign * 0.06),
+      handSaw: new THREE.Euler(0.02, sign * 0.16, sign * -0.28),
+      handcuffs: new THREE.Euler(-0.06, sign * 0.3, sign * 0.1),
+      beer: new THREE.Euler(0, sign * 0.16, 0),
+      burnerPhone: new THREE.Euler(-0.16, sign * 0.34, sign * -0.12),
+      inverter: new THREE.Euler(-0.08, sign * 0.22, 0),
+      adrenaline: new THREE.Euler(0, sign * 0.16, sign * -0.42),
+      expiredMedicine: new THREE.Euler(-0.08, sign * 0.2, sign * 0.06),
+      jammer: new THREE.Euler(-0.14, sign * 0.28, 0),
+      remote: new THREE.Euler(-0.2, sign * 0.3, sign * -0.08),
+    };
+    return rotations[item];
+  }
+
+  private itemGripOffset(item: ItemId, actorIsLocal: boolean): THREE.Vector3 {
+    const sign = actorIsLocal ? 1 : -1;
+    const offsets: Record<ItemId, THREE.Vector3> = {
+      magnifier: new THREE.Vector3(0.17 * sign, -0.035, 0.045 * sign),
+      cigarettes: new THREE.Vector3(-0.03 * sign, -0.035, 0.07 * sign),
+      handSaw: new THREE.Vector3(-0.22 * sign, -0.055, 0.05 * sign),
+      handcuffs: new THREE.Vector3(-0.09 * sign, -0.04, 0.045 * sign),
+      beer: new THREE.Vector3(0.055 * sign, -0.06, 0.075 * sign),
+      burnerPhone: new THREE.Vector3(0.04 * sign, -0.055, 0.07 * sign),
+      inverter: new THREE.Vector3(-0.11 * sign, -0.045, 0.045 * sign),
+      adrenaline: new THREE.Vector3(-0.15 * sign, -0.02, 0.035 * sign),
+      expiredMedicine: new THREE.Vector3(-0.07 * sign, -0.055, 0.065 * sign),
+      jammer: new THREE.Vector3(-0.11 * sign, -0.055, 0.055 * sign),
+      remote: new THREE.Vector3(0.02 * sign, -0.045, 0.1 * sign),
+    };
+    return offsets[item];
+  }
+
   private createProceduralItem(item: ItemId): THREE.Group {
     const group = new THREE.Group();
     const darkMetal = new THREE.MeshStandardMaterial({ color: 0x383331, metalness: 0.7, roughness: 0.5 });
     const red = new THREE.MeshStandardMaterial({ color: 0x6e2528, roughness: 0.74, metalness: 0.2 });
     const paper = new THREE.MeshStandardMaterial({ color: 0xb8aa91, roughness: 0.95 });
+    const black = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.86, metalness: 0.16 });
+    const green = new THREE.MeshBasicMaterial({ color: 0x7aff8d, toneMapped: false });
 
     if (item === "beer") {
       const label = new THREE.MeshStandardMaterial({ map: this.loadTexture(ASSETS.textures.beer), color: 0xd1c8b6, roughness: 0.62, metalness: 0.38 });
@@ -1172,38 +1403,80 @@ export class ThreeGame {
       link.position.y = 0.035;
       group.add(link);
     } else if (item === "burnerPhone") {
-      const shell = new THREE.MeshStandardMaterial({ color: 0x252323, roughness: 0.8 });
-      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.035, 0.25), shell);
-      lower.position.y = 0.03;
-      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.035, 0.2), shell);
-      upper.position.set(0, 0.12, -0.18);
-      upper.rotation.x = -0.78;
-      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.11, 0.105), new THREE.MeshBasicMaterial({ color: 0x9bb1a6 }));
-      screen.position.set(0, 0.142, -0.145);
-      screen.rotation.x = -0.78;
-      group.add(lower, upper, screen);
+      const shell = new THREE.MeshStandardMaterial({ color: 0x282626, roughness: 0.82, metalness: 0.12 });
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.055, 0.27), shell);
+      lower.position.y = 0.035;
+      const keypadPlate = new THREE.Mesh(new THREE.PlaneGeometry(0.145, 0.19), black);
+      keypadPlate.rotation.x = -Math.PI / 2;
+      keypadPlate.position.set(0, 0.065, 0.018);
+      group.add(lower, keypadPlate);
+      for (let row = 0; row < 4; row += 1) {
+        for (let column = 0; column < 3; column += 1) {
+          const key = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.012, 0.028), paper);
+          key.position.set((column - 1) * 0.043, 0.075, -0.045 + row * 0.043);
+          group.add(key);
+        }
+      }
+      const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.19, 10), darkMetal);
+      hinge.rotation.z = Math.PI / 2;
+      hinge.position.set(0, 0.07, -0.142);
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.045, 0.225), shell);
+      upper.position.set(0, 0.17, -0.235);
+      upper.rotation.x = -0.86;
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.125, 0.105), new THREE.MeshBasicMaterial({ color: 0xaebcaf }));
+      screen.position.set(0, 0.19, -0.205);
+      screen.rotation.x = -0.86;
+      const staticLine = new THREE.Mesh(new THREE.PlaneGeometry(0.085, 0.008), green);
+      staticLine.position.set(0, 0.218, -0.186);
+      staticLine.rotation.x = -0.86;
+      group.add(hinge, upper, screen, staticLine);
     } else if (item === "inverter") {
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.075, 0.19), paper);
-      box.position.y = 0.045;
-      const face = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.16), new THREE.MeshBasicMaterial({ map: this.loadTexture(ASSETS.textures.inverter) }));
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.09, 0.2), paper);
+      box.position.y = 0.05;
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(0.265, 0.165), new THREE.MeshBasicMaterial({ map: this.loadTexture(ASSETS.textures.inverter) }));
       face.rotation.x = -Math.PI / 2;
-      face.position.y = 0.086;
+      face.position.y = 0.096;
       group.add(box, face);
+      for (const x of [-0.11, 0.11]) {
+        const terminal = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.035, 9), darkMetal);
+        terminal.position.set(x, 0.115, -0.055);
+        group.add(terminal);
+      }
+      const toggle = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.055, 0.022), red);
+      toggle.rotation.z = -0.36;
+      toggle.position.set(0, 0.13, 0.05);
+      group.add(toggle);
     } else if (item === "adrenaline") {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.31, 10), new THREE.MeshStandardMaterial({ color: 0x9f7951, transparent: true, opacity: 0.86, roughness: 0.35 }));
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.027, 0.31, 12), new THREE.MeshStandardMaterial({ color: 0xd8c59e, transparent: true, opacity: 0.72, roughness: 0.28 }));
       barrel.rotation.z = Math.PI / 2;
       barrel.position.y = 0.05;
+      const fluid = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.2, 10), new THREE.MeshStandardMaterial({ color: 0x9b2428, transparent: true, opacity: 0.84, roughness: 0.36 }));
+      fluid.rotation.z = Math.PI / 2;
+      fluid.position.set(-0.035, 0.05, 0);
       const needle = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.18, 6), darkMetal);
       needle.rotation.z = Math.PI / 2;
       needle.position.set(0.23, 0.05, 0);
-      group.add(barrel, needle);
+      const plunger = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.12, 8), black);
+      plunger.rotation.z = Math.PI / 2;
+      plunger.position.set(-0.205, 0.05, 0);
+      const thumbPad = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.09, 0.075), red);
+      thumbPad.position.set(-0.27, 0.05, 0);
+      for (const x of [-0.155, 0.155]) {
+        const flange = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.09, 0.07), paper);
+        flange.position.set(x, 0.05, 0);
+        group.add(flange);
+      }
+      group.add(barrel, fluid, needle, plunger, thumbPad);
     } else if (item === "expiredMedicine") {
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.11, 0.18), paper);
-      box.position.y = 0.055;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.19), paper);
+      box.position.y = 0.06;
       const label = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.15), new THREE.MeshBasicMaterial({ map: this.loadTexture(ASSETS.textures.expiredMedicine) }));
       label.rotation.x = -Math.PI / 2;
-      label.position.y = 0.112;
-      group.add(box, label);
+      label.position.y = 0.122;
+      const flap = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.012, 0.185), red);
+      flap.position.set(0.08, 0.128, 0);
+      flap.rotation.z = -0.12;
+      group.add(box, label, flap);
     } else if (item === "jammer") {
       const jammerMetal = new THREE.MeshStandardMaterial({ color: 0x4c514c, roughness: 0.46, metalness: 0.72 });
       const body = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.12, 0.18), jammerMetal);
@@ -1221,14 +1494,20 @@ export class ThreeGame {
       }
       group.add(body, glow);
     } else if (item === "remote") {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.045, 0.29), darkMetal);
-      body.position.y = 0.025;
-      for (let index = 0; index < 4; index += 1) {
-        const button = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.012, 8), red);
-        button.position.set(0, 0.054, -0.09 + index * 0.06);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.055, 0.3), darkMetal);
+      body.position.y = 0.03;
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.25), black);
+      face.rotation.x = -Math.PI / 2;
+      face.position.y = 0.06;
+      const status = new THREE.Mesh(new THREE.PlaneGeometry(0.078, 0.035), green);
+      status.rotation.x = -Math.PI / 2;
+      status.position.set(0, 0.067, -0.09);
+      group.add(body, face, status);
+      for (let index = 0; index < 5; index += 1) {
+        const button = new THREE.Mesh(new THREE.CylinderGeometry(index === 0 ? 0.025 : 0.016, index === 0 ? 0.025 : 0.016, 0.014, 10), index === 0 ? red : paper);
+        button.position.set(index === 0 ? 0 : (index % 2 ? -0.035 : 0.035), 0.071, index === 0 ? 0.075 : -0.005 + Math.floor((index - 1) / 2) * 0.058);
         group.add(button);
       }
-      group.add(body);
     } else if (item === "magnifier") {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.018, 8, 20), darkMetal);
       ring.rotation.x = Math.PI / 2;
@@ -1244,9 +1523,13 @@ export class ThreeGame {
       handle.position.set(-0.22, 0.05, 0);
       group.add(blade, handle);
     } else {
-      const pack = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.16), paper);
+      const front = new THREE.MeshStandardMaterial({ map: this.loadTexture(ASSETS.textures.cigarettesFront), color: 0xd2c6ad, roughness: 0.92 });
+      const pack = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.16), front);
       pack.position.y = 0.045;
-      group.add(pack);
+      const lid = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.035, 0.16), paper);
+      lid.position.set(0, 0.105, -0.012);
+      lid.rotation.z = -0.08;
+      group.add(pack, lid);
     }
     group.traverse((node) => { if (node instanceof THREE.Mesh) { node.castShadow = true; node.receiveShadow = true; } });
     return group;
@@ -1314,14 +1597,10 @@ export class ThreeGame {
     const stagedAction = item === "magnifier" || item === "inverter" || item === "handcuffs" || item === "jammer";
     const focus = stagedAction ? faceFocus : actionFocus;
     prop.position.copy(start);
-    const propScale = item === "handcuffs" ? 1.18
-      : item === "magnifier" ? 0.94
-      : item === "handSaw" ? 0.9
-        : item === "beer" ? 0.74
-          : item === "cigarettes" ? 0.5
-            : item === "jammer" ? 1.24
-              : item === "remote" ? 1.08
-                : 0.84;
+    const propScale = this.itemActionScale(item);
+    const pickupQuaternion = prop.quaternion.clone();
+    const actionRotation = this.itemActionRotation(item, actorIsLocal);
+    const actionQuaternion = new THREE.Quaternion().setFromEuler(actionRotation);
     prop.scale.setScalar(propScale * 0.72);
     this.scene.add(prop);
     const carrier = this.createHand(new THREE.MeshStandardMaterial({
@@ -1346,7 +1625,11 @@ export class ThreeGame {
     carrier.add(sleeve, cuff);
     const carrierScale = actorIsLocal ? 0.96 : 1.02;
     carrier.scale.setScalar(carrierScale);
-    carrier.rotation.set(-0.48, actorIsLocal ? -0.18 : 0.2, actorIsLocal ? 0.2 : -0.18);
+    carrier.rotation.set(
+      item === "handSaw" ? -0.62 : item === "beer" ? -0.38 : -0.5,
+      actorIsLocal ? -0.18 : 0.2,
+      actorIsLocal ? (item === "magnifier" ? -0.16 : 0.2) : (item === "magnifier" ? 0.16 : -0.18),
+    );
     const carrierGripRotation = carrier.rotation.clone();
     const carrierApproachRotation = carrierGripRotation.clone();
     carrierApproachRotation.x += 0.34;
@@ -1354,14 +1637,29 @@ export class ThreeGame {
     carrierApproachRotation.z += actorIsLocal ? 0.26 : -0.26;
     carrier.rotation.copy(carrierApproachRotation);
     carrier.scale.setScalar(0.001);
-    const closeGrip = item === "beer" || item === "cigarettes" || item === "expiredMedicine" || item === "burnerPhone";
-    const carrierOffset = new THREE.Vector3(
-      actorIsLocal ? (closeGrip ? -0.035 : -0.07) : (closeGrip ? 0.035 : 0.07),
-      closeGrip ? 0.012 : -0.025,
-      actorIsLocal ? (closeGrip ? 0.065 : 0.09) : (closeGrip ? -0.065 : -0.09),
-    );
+    const carrierOffset = this.itemGripOffset(item, actorIsLocal);
     carrier.position.copy(start).add(carrierOffset);
     this.scene.add(carrier);
+    const supportHand = this.createHand(new THREE.MeshStandardMaterial({
+      color: actorIsLocal ? 0xb58a7b : 0xc09382,
+      roughness: 0.98,
+    }));
+    const supportSleeveVector = new THREE.Vector3(actorIsLocal ? 0.18 : -0.18, -0.34, actorIsLocal ? 0.1 : -0.1);
+    const supportSleeve = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.05, 0.29, 5, 9),
+      new THREE.MeshStandardMaterial({ color: actorIsLocal ? 0x171718 : 0x080707, roughness: 0.94 }),
+    );
+    supportSleeve.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), supportSleeveVector.clone().normalize());
+    supportSleeve.position.copy(supportSleeveVector).multiplyScalar(0.56);
+    supportSleeve.castShadow = true;
+    supportHand.add(supportSleeve);
+    supportHand.scale.setScalar(0.001);
+    this.scene.add(supportHand);
+    const placeSupportHand = (position: THREE.Vector3, rotation: THREE.Euler, blend: number): void => {
+      supportHand.position.copy(position);
+      supportHand.rotation.copy(rotation);
+      supportHand.scale.setScalar(Math.max(0.001, carrierScale * blend));
+    };
     const effectRoot = new THREE.Group();
     this.scene.add(effectRoot);
     const makeParticles = (color: number, count: number, size: number): THREE.Points => {
@@ -1376,7 +1674,7 @@ export class ThreeGame {
       return new THREE.Points(geometry, new THREE.PointsMaterial({ color, size, transparent: true, opacity: 0, depthWrite: false }));
     };
     const setCarrier = (offset = carrierOffset): void => { carrier.position.copy(prop.position).add(offset); };
-    const baseRotation = prop.rotation.clone();
+    const baseRotation = actionRotation.clone();
     const leftIntensity = this.roomLightLeft.intensity;
     const rightIntensity = this.roomLightRight.intensity;
     const cameraStart = this.camera.position.clone();
@@ -1395,8 +1693,8 @@ export class ThreeGame {
         prop.position.lerpVectors(start, focus, eased);
         prop.position.y += Math.sin(amount * Math.PI) * 0.16;
         prop.scale.setScalar(THREE.MathUtils.lerp(propScale * 0.72, propScale, handBlend));
-        prop.rotation.y = baseRotation.y + amount * (actorIsLocal ? 0.66 : -0.58);
-        prop.rotation.x = baseRotation.x + Math.sin(amount * Math.PI) * 0.14;
+        prop.quaternion.slerpQuaternions(pickupQuaternion, actionQuaternion, eased);
+        prop.rotateX(Math.sin(amount * Math.PI) * 0.06);
         const approachOffset = carrierOffset.clone().add(new THREE.Vector3(
           actorIsLocal ? -0.16 * (1 - handBlend) : 0.16 * (1 - handBlend),
           -0.22 * (1 - handBlend),
@@ -1404,6 +1702,7 @@ export class ThreeGame {
         ));
         setCarrier(approachOffset);
         carrier.scale.setScalar(Math.max(0.001, carrierScale * handBlend));
+        if (!actorIsLocal && this.opponentMode === "solo") this.blendDealerIdleHands(handBlend);
         carrier.rotation.set(
           THREE.MathUtils.lerp(carrierApproachRotation.x, carrierGripRotation.x, handBlend),
           THREE.MathUtils.lerp(carrierApproachRotation.y, carrierGripRotation.y, handBlend),
@@ -1428,6 +1727,11 @@ export class ThreeGame {
           prop.position.y += Math.sin(amount * Math.PI) * 0.025;
           prop.rotation.z = -0.35 + Math.sin(amount * Math.PI * 12) * 0.08;
           setCarrier(new THREE.Vector3(actorIsLocal ? -0.13 : 0.13, -0.09, actorIsLocal ? 0.08 : -0.08));
+          placeSupportHand(
+            actionFocus.clone().add(new THREE.Vector3(actorIsLocal ? 0.26 : -0.26, -0.075, actorIsLocal ? 0.035 : -0.035)),
+            new THREE.Euler(-0.68, actorIsLocal ? 0.12 : -0.12, actorIsLocal ? -0.22 : 0.22),
+            this.easeInOut(THREE.MathUtils.clamp(amount / 0.16, 0, 1)),
+          );
           sparkMaterial.opacity = Math.sin(amount * Math.PI * 12) > 0.2 ? (1 - amount) * 0.88 : 0.12;
           sparks.rotation.y += 0.1;
           sparks.position.y += 0.0012;
@@ -1461,17 +1765,32 @@ export class ThreeGame {
         const smoke = makeParticles(0xc2b7ad, 24, 0.035);
         effectRoot.add(smoke);
         const packStart = prop.position.clone();
-        const mouth = faceFocus.clone().add(new THREE.Vector3(actorIsLocal ? 0.02 : -0.02, 0.08, actorIsLocal ? 0.05 : -0.05));
-        await this.tween(2050, (amount) => {
-          const draw = this.easeInOut(THREE.MathUtils.clamp(amount * 1.8, 0, 1));
-          prop.position.copy(packStart).add(new THREE.Vector3(0, -amount * 0.08, 0));
-          cigarette.position.lerpVectors(packStart.clone().add(new THREE.Vector3(0.02, 0.09, 0.02)), mouth, draw);
-          cigarette.rotation.y = Math.sin(amount * Math.PI) * 0.18;
-          ember.intensity = amount > 0.48 && amount < 0.8 ? 6 + Math.sin(amount * Math.PI * 18) * 1.5 : 0.7;
-          smoke.position.copy(mouth).add(new THREE.Vector3(0, 0.1 + amount * 0.16, actorIsLocal ? -0.02 : 0.02));
-          (smoke.material as THREE.PointsMaterial).opacity = THREE.MathUtils.clamp((amount - 0.46) * 2.2, 0, 0.48) * (1 - amount * 0.45);
+        const cigaretteStart = packStart.clone().add(new THREE.Vector3(actorIsLocal ? 0.02 : -0.02, 0.1, 0.02));
+        const mouth = faceFocus.clone().add(new THREE.Vector3(actorIsLocal ? 0.015 : -0.015, 0.075, actorIsLocal ? 0.06 : -0.06));
+        const afterDrag = mouth.clone().add(new THREE.Vector3(actorIsLocal ? 0.18 : -0.18, -0.04, actorIsLocal ? 0.04 : -0.04));
+        await this.tween(2850, (amount) => {
+          const extract = this.easeInOut(THREE.MathUtils.clamp(amount / 0.2, 0, 1));
+          const raise = this.easeInOut(THREE.MathUtils.clamp((amount - 0.18) / 0.3, 0, 1));
+          const withdraw = this.easeInOut(THREE.MathUtils.clamp((amount - 0.78) / 0.22, 0, 1));
+          prop.position.copy(packStart).add(new THREE.Vector3(actorIsLocal ? -0.08 : 0.08, -0.08 * amount, 0));
+          const extracted = cigaretteStart.clone().add(new THREE.Vector3(actorIsLocal ? 0.15 : -0.15, 0.035, 0));
+          cigarette.position.lerpVectors(cigaretteStart, extracted, extract);
+          cigarette.position.lerp(mouth, raise);
+          cigarette.position.lerp(afterDrag, withdraw);
+          cigarette.position.y += amount > 0.48 && amount < 0.78 ? Math.sin(amount * Math.PI * 4) * 0.003 : 0;
+          cigarette.rotation.set(0, actorIsLocal ? -0.12 : 0.12, actorIsLocal ? -0.08 : 0.08);
+          const drag = THREE.MathUtils.clamp((amount - 0.5) / 0.26, 0, 1) * (1 - withdraw);
+          ember.intensity = 0.6 + drag * (7.5 + Math.sin(amount * Math.PI * 22) * 1.3);
+          const smokeTip = cigarette.position.clone().add(new THREE.Vector3(actorIsLocal ? 0.1 : -0.1, 0.025, 0));
+          smoke.position.copy(smokeTip).add(new THREE.Vector3(0, 0.06 + Math.max(0, amount - 0.56) * 0.3, 0));
+          (smoke.material as THREE.PointsMaterial).opacity = THREE.MathUtils.clamp((amount - 0.58) * 2.8, 0, 0.52) * (1 - withdraw * 0.4);
           smoke.rotation.y += 0.018;
           setCarrier();
+          placeSupportHand(
+            cigarette.position.clone().add(new THREE.Vector3(actorIsLocal ? -0.085 : 0.085, -0.035, actorIsLocal ? 0.025 : -0.025)),
+            new THREE.Euler(-0.34, actorIsLocal ? -0.2 : 0.2, actorIsLocal ? -0.36 : 0.36),
+            this.easeInOut(THREE.MathUtils.clamp(amount / 0.16, 0, 1)),
+          );
         });
       } else if (item === "handcuffs") {
         const cuffLight = new THREE.PointLight(0xffc09d, 0, 1.5, 2);
@@ -1487,6 +1806,11 @@ export class ThreeGame {
           cuffLight.intensity = 2.5 + Math.sin(amount * Math.PI) * 5;
           this.lookTarget.lerp(prop.position, 0.055);
           setCarrier();
+          placeSupportHand(
+            prop.position.clone().add(new THREE.Vector3(actorIsLocal ? 0.14 : -0.14, -0.03, actorIsLocal ? 0.04 : -0.04)),
+            new THREE.Euler(-0.5, actorIsLocal ? 0.15 : -0.15, actorIsLocal ? -0.28 : 0.28),
+            this.easeInOut(THREE.MathUtils.clamp(amount / 0.18, 0, 1)),
+          );
         });
       } else if (item === "beer") {
         const drinkStart = prop.position.clone();
@@ -1570,6 +1894,11 @@ export class ThreeGame {
           pills.rotation.z = pour * (actorIsLocal ? -1.2 : 1.2);
           pills.scale.setScalar(1 - THREE.MathUtils.clamp((amount - 0.82) / 0.18, 0, 1));
           setCarrier();
+          placeSupportHand(
+            pills.position.clone().add(new THREE.Vector3(actorIsLocal ? -0.07 : 0.07, -0.045, actorIsLocal ? 0.025 : -0.025)),
+            new THREE.Euler(-0.42, actorIsLocal ? -0.16 : 0.16, actorIsLocal ? -0.26 : 0.26),
+            Math.min(1 - THREE.MathUtils.clamp((amount - 0.84) / 0.16, 0, 1), this.easeInOut(THREE.MathUtils.clamp(amount / 0.18, 0, 1))),
+          );
         });
       } else if (item === "jammer") {
         const pulse = new THREE.Mesh(new THREE.RingGeometry(0.08, 0.1, 24), new THREE.MeshBasicMaterial({ color: 0x4cff72, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
@@ -1613,6 +1942,7 @@ export class ThreeGame {
       await wait(260);
       const finish = prop.position.clone();
       const finishScale = prop.scale.x;
+      const supportFinishScale = supportHand.scale.x;
       const exit = start.clone().add(new THREE.Vector3(actorIsLocal ? -0.35 : 0.35, -0.28, actorIsLocal ? 0.32 : -0.32));
       await this.tween(780, (amount) => {
         const eased = this.easeInOut(amount);
@@ -1627,6 +1957,8 @@ export class ThreeGame {
         ));
         setCarrier(releaseOffset);
         carrier.scale.setScalar(Math.max(0.001, carrierScale * handBlend));
+        supportHand.scale.setScalar(Math.max(0.001, supportFinishScale * handBlend));
+        if (!actorIsLocal && this.opponentMode === "solo") this.blendDealerIdleHands(handBlend);
         carrier.rotation.set(
           THREE.MathUtils.lerp(carrierApproachRotation.x, carrierGripRotation.x, handBlend),
           THREE.MathUtils.lerp(carrierApproachRotation.y, carrierGripRotation.y, handBlend),
@@ -1641,8 +1973,10 @@ export class ThreeGame {
       this.roomLightRight.intensity = rightIntensity;
       this.camera.position.copy(cameraStart);
       this.lookTarget.copy(lookStart);
-      this.scene.remove(prop, carrier, effectRoot);
+      if (!actorIsLocal && this.opponentMode === "solo") this.blendDealerIdleHands(0);
+      this.scene.remove(prop, carrier, supportHand, effectRoot);
       this.disposeUniqueObject(carrier);
+      this.disposeUniqueObject(supportHand);
       this.disposeUniqueObject(effectRoot);
       this.animationBusy = false;
     }
@@ -1771,12 +2105,13 @@ export class ThreeGame {
       gripHand.scale.setScalar(Math.max(0.001, gripTargetScale * actionBlend));
       pumpHand.scale.setScalar(Math.max(0.001, pumpTargetScale * actionBlend));
     };
-    const dealerBoneScales = !actorIsLocal ? {
+    const dealerBoneScales = !actorIsLocal && this.opponentMode === "solo" ? {
       left: this.dealerHandBones.left?.scale.clone(),
       right: this.dealerHandBones.right?.scale.clone(),
     } : null;
     const blendDealerHands = (actionBlend: number): void => {
       if (actorIsLocal || !dealerBoneScales) return;
+      this.blendDealerIdleHands(actionBlend);
       const hidden = new THREE.Vector3(0.001, 0.001, 0.001);
       if (dealerBoneScales.left) this.dealerHandBones.left?.scale.lerpVectors(dealerBoneScales.left, hidden, actionBlend);
       if (dealerBoneScales.right) this.dealerHandBones.right?.scale.lerpVectors(dealerBoneScales.right, hidden, actionBlend);
@@ -1862,8 +2197,16 @@ export class ThreeGame {
         this.muzzleLight.intensity = 52 * (1 - amount);
         const kick = Math.pow(1 - amount, 2.2);
         const settle = Math.sin(amount * Math.PI * 5) * (1 - amount) * 0.012;
-        this.camera.position.set(tensionCamera.x + settle, tensionCamera.y + kick * 0.055, tensionCamera.z + kick * 0.085);
-        this.lookTarget.copy(tensionLook).add(new THREE.Vector3(settle * 0.4, kick * 0.07, 0));
+        this.camera.position.set(
+          tensionCamera.x + settle + (targetIsLocal ? kick * 0.08 : 0),
+          tensionCamera.y + kick * (targetIsLocal ? -0.16 : 0.055),
+          tensionCamera.z + kick * (targetIsLocal ? 0.46 : 0.085),
+        );
+        this.lookTarget.copy(tensionLook).add(new THREE.Vector3(
+          settle * 0.4 + (targetIsLocal ? kick * 0.13 : 0),
+          kick * (targetIsLocal ? -0.2 : 0.07),
+          0,
+        ));
         gun.position.copy(targetPosition).addScaledVector(aimDirection, -kick * 0.22);
         gun.position.y += settle;
         gun.quaternion.copy(targetQuaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -kick * 0.075 + settle));
@@ -1991,24 +2334,23 @@ export class ThreeGame {
     if (!this.dealer) return;
     const startPosition = this.dealer.position.clone();
     const startRotation = this.dealer.rotation.clone();
-    await this.tween(1050, (amount) => {
-      const impact = amount < 0.22 ? this.ease(amount / 0.22) : 1;
-      const recover = amount < 0.48 ? 0 : this.easeInOut((amount - 0.48) / 0.52);
-      const weight = impact * (1 - recover);
-      const aftershock = amount < 0.22 ? 0 : Math.sin((amount - 0.22) * Math.PI * 4.2) * (1 - amount) * 0.05;
+    await this.tween(1380, (amount) => {
+      const impact = this.ease(THREE.MathUtils.clamp(amount / 0.12, 0, 1));
+      const collapse = this.easeInOut(THREE.MathUtils.clamp((amount - 0.1) / 0.9, 0, 1));
+      const lift = Math.sin(THREE.MathUtils.clamp(amount / 0.3, 0, 1) * Math.PI) * 0.15;
+      const aftershock = amount < 0.12 ? 0 : Math.sin((amount - 0.12) * Math.PI * 7.2) * (1 - amount) * 0.075;
       this.dealer!.position.set(
-        startPosition.x + weight * 0.15 + aftershock * 0.5,
-        startPosition.y + weight * 0.12 - Math.sin(amount * Math.PI) * 0.035,
-        startPosition.z - weight * 0.38,
+        startPosition.x + impact * 0.14 + collapse * 0.17 + aftershock * 0.45,
+        startPosition.y + lift - collapse * 0.62,
+        startPosition.z - impact * 0.42 - collapse * 0.72,
       );
       this.dealer!.rotation.set(
-        startRotation.x - weight * 0.24 + aftershock * 0.18,
-        startRotation.y + weight * 0.32,
-        startRotation.z + weight * 0.34 + aftershock,
+        startRotation.x - impact * 0.38 - collapse * 0.72 + aftershock * 0.15,
+        startRotation.y + impact * 0.16 + collapse * 0.12,
+        startRotation.z + impact * 0.24 + collapse * 0.38 + aftershock,
       );
     });
-    this.dealer.position.copy(startPosition);
-    this.dealer.rotation.copy(startRotation);
+    await wait(260);
   }
 
   private spawnBlood(): void {
@@ -2065,7 +2407,7 @@ export class ThreeGame {
   private async revealLoad(pending: PendingReveal): Promise<void> {
     while (this.animationBusy) await wait(80);
     this.animationBusy = true;
-    if (pending.round > 1 && this.briefcase) {
+    if (pending.itemDrawCount > 0 && this.briefcase) {
       const drawCount = Math.min(pending.itemDrawCount, pending.inventory.length);
       const localStartIndex = Math.max(0, pending.inventory.length - drawCount);
       const dealerStartIndex = Math.max(0, pending.opponentInventory.length - drawCount);
@@ -2188,6 +2530,7 @@ export class ThreeGame {
     const blendDealerLoadHands = (actionBlend: number): void => {
       gripHand.scale.setScalar(Math.max(0.001, 1.42 * actionBlend));
       loadingHand.scale.setScalar(Math.max(0.001, 1.42 * actionBlend));
+      if (this.opponentMode === "solo") this.blendDealerIdleHands(actionBlend);
       if (dealerBoneScales.left) this.dealerHandBones.left?.scale.lerpVectors(dealerBoneScales.left, hiddenHandScale, actionBlend);
       if (dealerBoneScales.right) this.dealerHandBones.right?.scale.lerpVectors(dealerBoneScales.right, hiddenHandScale, actionBlend);
     };
@@ -2333,11 +2676,27 @@ export class ThreeGame {
       const template = this.itemTemplates.get(item);
       if (!template) return;
       const instance = cloneSkeleton(template) as THREE.Group;
-      instance.scale.setScalar(0.72);
+      const caseScale: Record<ItemId, number> = {
+        magnifier: 0.62,
+        cigarettes: 0.72,
+        handSaw: 0.5,
+        handcuffs: 0.58,
+        beer: 0.64,
+        burnerPhone: 0.62,
+        inverter: 0.66,
+        adrenaline: 0.58,
+        expiredMedicine: 0.68,
+        jammer: 0.58,
+        remote: 0.66,
+      };
+      instance.scale.setScalar(caseScale[item]);
       const span = Math.max(1, shown.length - 1);
-      instance.position.set(-0.46 + index * (0.92 / span), 0, 0);
-      instance.rotation.y = (index - (shown.length - 1) / 2) * 0.12;
-      if (item === "cigarettes") instance.rotation.x = -Math.PI / 2;
+      instance.position.set(-0.46 + index * (0.92 / span), 0, index % 2 ? 0.05 : -0.05);
+      instance.rotation.copy(this.itemTableRotation(item, true, index));
+      instance.rotation.y = (index - (shown.length - 1) / 2) * 0.08;
+      instance.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(instance);
+      instance.position.y += -bounds.min.y + 0.008;
       this.briefcaseItems.add(instance);
     });
   }
@@ -2615,15 +2974,15 @@ export class ThreeGame {
     const width = window.innerWidth;
     const height = window.innerHeight;
     const portrait = width / height < 0.82;
-    this.homeCamera.set(0, portrait ? 2.48 : 2.08, portrait ? 4.12 : 3.18);
+    this.homeCamera.set(0, portrait ? 2.55 : 2.2, portrait ? 4.24 : 3.48);
     const healthMachine = this.scene.getObjectByName("health-machine");
     if (healthMachine) {
-      healthMachine.position.x = portrait ? 1.72 : 2.43;
-      healthMachine.position.z = portrait ? -0.42 : -0.2;
+      healthMachine.position.x = portrait ? 1.72 : 2.7;
+      healthMachine.position.z = portrait ? -0.42 : -0.16;
       healthMachine.scale.setScalar(portrait ? 0.72 : 1);
     }
     const shellRack = this.scene.getObjectByName("shell-rack");
-    if (shellRack) shellRack.position.x = portrait ? 0.66 : 1.04;
+    if (shellRack) shellRack.position.x = portrait ? 0.66 : 1.28;
     this.camera.fov = portrait ? 56 : 50;
     if (this.tableActive && !this.animationBusy) {
       this.camera.position.copy(this.homeCamera);

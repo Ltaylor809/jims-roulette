@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { DOUBLE_ITEM_IDS, ITEM_IDS, MULTIPLAYER_ITEM_IDS, STORY_ITEM_IDS } from "../content/items";
 import { applyCommand, createMatch, shellCounts } from "./rules";
 
 describe("Jims Roulette rules", () => {
+  it("ships the complete base, extended, and multiplayer item rosters", () => {
+    expect(STORY_ITEM_IDS).toHaveLength(5);
+    expect(DOUBLE_ITEM_IDS).toHaveLength(9);
+    expect(MULTIPLAYER_ITEM_IDS).toHaveLength(9);
+    expect(ITEM_IDS).toHaveLength(11);
+    expect(MULTIPLAYER_ITEM_IDS).toContain("jammer");
+    expect(MULTIPLAYER_ITEM_IDS).toContain("remote");
+    expect(MULTIPLAYER_ITEM_IDS).not.toContain("handcuffs");
+    expect(MULTIPLAYER_ITEM_IDS).not.toContain("expiredMedicine");
+  });
+
   it("starts faithful Story Mode with two charges, no items, and a 1/2 load", () => {
     const first = createMatch(1234);
     const second = createMatch(1234);

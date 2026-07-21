@@ -19,6 +19,7 @@ export type MechanicalCue =
   | "rackBack"
   | "loadShell"
   | "splatter"
+  | "dealerHands"
   | "clubStart"
   | "clubOpen"
   | "clubMuffle";
@@ -173,8 +174,9 @@ export class AudioDirector {
       rackBack: original + "intro/rack shotgun_back.ogg",
       loadShell: local + "load_shell.ogg",
       splatter: original + "intro/splatter1.ogg",
+      dealerHands: original + "dealer hands on table.ogg",
     } as const;
-    this.playUrl(sounds[cue], cue === "wire" ? 0.62 : cue === "mainDoor" ? 0.36 : 0.48);
+    this.playUrl(sounds[cue], cue === "wire" ? 0.62 : cue === "mainDoor" ? 0.36 : cue === "dealerHands" ? 0.19 : 0.48);
   }
 
   signature(cue: "boot" | "key" | "letter" | "shutdown"): void {

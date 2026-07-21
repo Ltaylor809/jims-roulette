@@ -52,6 +52,7 @@ function bindController(next: GameController): void {
   });
   ui.showGame();
   game.setMenuView(false);
+  if (next.state.mode === "solo") ui.greetDealer();
 }
 
 async function startSolo(): Promise<void> {
@@ -98,6 +99,7 @@ document.querySelectorAll<HTMLElement>("[data-close-modal]").forEach((button) =>
 document.querySelectorAll<HTMLButtonElement>("button").forEach((button) => button.addEventListener("pointerenter", () => audio.hover()));
 ui.onLeaveTable = leaveTable;
 ui.onWaiverCue = (cue) => audio.signature(cue);
+ui.onDealerLine = () => audio.mechanical("dealerHands");
 
 requireElement("create-room").addEventListener("click", async () => {
   ui.lobbyStatus.textContent = "Opening a private room…";

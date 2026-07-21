@@ -14,6 +14,8 @@ export class GameUI {
   private committedShotRevision = -1;
   private locked = false;
   private toastTimer = 0;
+  private dealerDialogueTimer = 0;
+  private dealerTypeTimer = 0;
   private turnTimer = 0;
   private resultTimer = 0;
   private introCaptionTimer = 0;
@@ -88,6 +90,7 @@ export class GameUI {
 
   onLeaveTable: () => void = () => undefined;
   onWaiverCue: (cue: "boot" | "key" | "letter" | "shutdown") => void = () => undefined;
+  onDealerLine: () => void = () => undefined;
 
   attach(controller: GameController): void {
     this.unsubscribe?.();
@@ -179,7 +182,7 @@ export class GameUI {
       <ul>
         <li>A blank fired at yourself keeps the turn.</li>
         <li>A live shell—or any shot across the table—passes the turn.</li>
-        <li>Story Mode has three increasingly dangerous rounds.</li>
+        <li>Story Mode has three increasingly dangerous rounds; the expanded equipment set unlocks after Round I.</li>
         <li>Items do not spend your shot. Select their physical model on the table.</li>
       </ul>
       <h3>TABLE EQUIPMENT</h3>
@@ -194,7 +197,7 @@ export class GameUI {
     this.infoContent.innerHTML = `
       <p class="eyebrow">CREDITS & LICENSES</p>
       <h2>THE PIECES ON THE TABLE.</h2>
-      <p>Jims Roulette uses original browser-game code and presentation. Openly licensed assets are recorded below. Owner-supplied reference files stay in the local-only folder and are not cleared for redistribution.</p>
+      <p>Jims Roulette uses original browser-game code and presentation. Openly licensed assets are recorded below, and owner-supplied assets are used with the project owner's public-distribution permission.</p>
       <pre>${this.escape(ledger)}</pre>
     `;
     this.infoModal.hidden = false;
@@ -266,21 +269,86 @@ export class GameUI {
 
   notify(event: GameEvent): void {
     const toast = this.get<HTMLElement>("event-toast");
+    const toastLabel = this.get<HTMLElement>("event-toast-label");
+    const toastCopy = this.get<HTMLElement>("event-toast-copy");
     let message = event.message;
     if (event.kind === "shot" && event.shell === "live" && this.currentState?.mode === "multiplayer" && this.controller) {
       const label = event.target === this.controller.localActor ? "YOU" : "OTHER PLAYER";
       message = `${label} ${label === "YOU" ? "TAKE" : "TAKES"} ${event.damage} DAMAGE.`;
     }
-    toast.textContent = message.toUpperCase();
+    const label = event.kind === "shot"
+      ? event.shell === "live" ? "IMPACT" : "CHAMBER"
+      : event.kind === "item" ? ITEMS[event.item].name
+        : "TABLE";
+    toastLabel.textContent = label.toUpperCase();
+    toastCopy.textContent = message.toUpperCase();
+    toast.dataset.kind = event.kind;
+    toast.classList.remove("show");
+    void toast.offsetWidth;
     toast.classList.add("show");
     window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => toast.classList.remove("show"), event.kind === "shot" ? 3400 : 3200);
+    this.toastTimer = window.setTimeout(() => toast.classList.remove("show"), event.kind === "shot" ? 2850 : 2500);
+    const dealerLine = this.dealerLineFor(event);
+    if (dealerLine) this.showDealerLine(dealerLine);
     if (event.kind === "shot") this.disarmShotgun();
     if (event.kind === "shot" && event.shell === "live") {
       document.body.classList.remove("damage-flash");
       void document.body.offsetWidth;
       document.body.classList.add("damage-flash");
     }
+  }
+
+  greetDealer(): void {
+    if (this.currentState?.mode !== "solo") return;
+    window.setTimeout(() => this.showDealerLine(`WELCOME, ${this.playerName}. LET'S BEGIN.`), 950);
+  }
+
+  private showDealerLine(message: string): void {
+    const dialogue = this.get<HTMLElement>("dealer-dialogue");
+    const copy = this.get<HTMLElement>("dealer-dialogue-copy");
+    window.clearTimeout(this.dealerDialogueTimer);
+    window.clearInterval(this.dealerTypeTimer);
+    copy.textContent = "";
+    dialogue.classList.remove("show");
+    void dialogue.offsetWidth;
+    dialogue.classList.add("show");
+    this.onDealerLine();
+    let index = 0;
+    this.dealerTypeTimer = window.setInterval(() => {
+      index += 1;
+      copy.textContent = message.slice(0, index);
+      if (index >= message.length) window.clearInterval(this.dealerTypeTimer);
+    }, 24);
+    this.dealerDialogueTimer = window.setTimeout(() => dialogue.classList.remove("show"), Math.max(3000, message.length * 24 + 1650));
+  }
+
+  private dealerLineFor(event: GameEvent): string | null {
+    if (this.currentState?.mode !== "solo") return null;
+    if (event.kind === "round") return event.message.includes("FINAL") ? "NO MORE DEFIBRILLATORS AFTER THIS." : "THE STAKES HAVE CHANGED.";
+    if (event.kind === "shot") {
+      if (event.shell === "blank" && event.actor === "player" && event.target === "player") return "AGAIN.";
+      if (event.shell === "blank" && event.actor === "player") return "MY TURN.";
+      if (event.shell === "blank" && event.actor === "dealer") return "HOW UNFORTUNATE.";
+      if (event.target === "dealer") return event.damage > 1 ? "YOU CAME PREPARED." : "GOOD.";
+      return event.damage > 1 ? "THAT ONE WILL STAY WITH YOU." : "STILL WITH ME?";
+    }
+    if (event.kind !== "item") return null;
+    if (event.actor === "dealer") {
+      const lines: Partial<Record<ItemId, string>> = {
+        magnifier: "LET'S HAVE A LOOK.", cigarettes: "DON'T MIND ME.", handSaw: "THIS SHOULD HURT.",
+        handcuffs: "STAY WHERE YOU ARE.", beer: "NOT THAT ONE.", burnerPhone: "YES. I UNDERSTAND.",
+        inverter: "A SMALL CHANGE.", adrenaline: "I'LL BORROW THAT.", expiredMedicine: "WORTH THE RISK.",
+        jammer: "QUIET.", remote: "WE GO THE OTHER WAY.",
+      };
+      return lines[event.item] ?? "MY MOVE.";
+    }
+    const lines: Partial<Record<ItemId, string>> = {
+      magnifier: "LOOKING WON'T CHANGE WHAT'S IN THERE.", cigarettes: "TAKE YOUR TIME.",
+      handSaw: "NOW YOU'RE SERIOUS.", handcuffs: "YOU BOUGHT YOURSELF A MOMENT.", beer: "ONE LESS UNKNOWN.",
+      burnerPhone: "WHO DO YOU THINK ANSWERS?", inverter: "ARE YOU CERTAIN?", adrenaline: "GREEDY.",
+      expiredMedicine: "TRUST THE LABEL IF YOU LIKE.", jammer: "I CAN STILL SEE YOU.", remote: "INTERESTING.",
+    };
+    return lines[event.item] ?? null;
   }
 
   private render(state: GameState, locked: boolean): void {

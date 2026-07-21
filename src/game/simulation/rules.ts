@@ -1,4 +1,4 @@
-import { MULTIPLAYER_ITEM_IDS, STORY_ITEM_IDS } from "../content/items";
+import { DOUBLE_ITEM_IDS, MULTIPLAYER_ITEM_IDS, STORY_ITEM_IDS } from "../content/items";
 import type { Actor, FutureKnowledge, GameCommand, GameEvent, GameMode, GameState, ItemEvent, ItemId, Shell } from "./types";
 
 const other = (actor: Actor): Actor => actor === "player" ? "dealer" : "player";
@@ -27,7 +27,8 @@ function shuffle<T>(state: GameState, values: T[]): T[] {
 }
 
 function itemPool(state: GameState): ItemId[] {
-  return state.mode === "multiplayer" ? MULTIPLAYER_ITEM_IDS : STORY_ITEM_IDS;
+  if (state.mode === "multiplayer") return MULTIPLAYER_ITEM_IDS;
+  return state.round >= 2 ? DOUBLE_ITEM_IDS : STORY_ITEM_IDS;
 }
 
 function drawItems(state: GameState, actor: Actor, count: number): void {
@@ -202,7 +203,7 @@ function activateItem(state: GameState, actor: Actor, item: ItemId, shouldConsum
       return { kind: "item", actor, item, revealed: inverted, message: "THE CURRENT SHELL CHANGES POLARITY." };
     }
     case "expiredMedicine": {
-      const won = nextRandom(state) < 0.5;
+      const won = nextRandom(state) < 0.4;
       const before = state.health[actor];
       if (won && !state.suddenDeath[actor]) state.health[actor] = Math.min(state.maxHealth, state.health[actor] + 2);
       else if (!won) loseHealth(state, actor, 1);

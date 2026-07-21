@@ -60,7 +60,7 @@ export const ITEMS: Record<ItemId, ItemDefinition> = {
   expiredMedicine: {
     id: "expiredMedicine",
     name: "Expired Medicine",
-    short: "50%: gain 2 charges. Otherwise lose 1",
+    short: "40%: gain 2 charges. Otherwise lose 1",
     glyph: "✣",
     availability: "double",
   },
