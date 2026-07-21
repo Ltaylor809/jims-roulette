@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+    <title>Jims Roulette Launcher</title>
+    <style>
+      :root { color-scheme: dark; font-family: "Courier New", monospace; background: #030202; color: #ddd0c2; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; overflow: hidden; background: radial-gradient(circle at 72% 35%, #301111 0, #100707 31%, #030202 72%); }
+      body::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .24; background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(255,255,255,.035) 4px); mix-blend-mode: overlay; }
+      .drag { position: fixed; inset: 0 0 auto; height: 44px; -webkit-app-region: drag; z-index: 4; }
+      .shells { position: fixed; inset: -25% -8%; transform: rotate(-14deg); opacity: .2; background: repeating-linear-gradient(115deg, transparent 0 64px, rgba(126,37,28,.32) 65px 78px, transparent 79px 134px); }
+      main { position: relative; min-height: 100vh; display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; padding: 74px clamp(48px, 8vw, 108px) 54px; gap: 44px; }
+      .eyebrow { color: #8b7267; letter-spacing: .3em; font-size: 11px; margin: 0 0 20px; }
+      h1 { margin: 0; font-family: Georgia, serif; font-weight: 500; font-stretch: condensed; font-size: clamp(64px, 10vw, 116px); line-height: .7; letter-spacing: -.07em; text-shadow: 0 5px 32px #000; }
+      h1 span { display: block; padding-left: .48em; color: #a94137; }
+      .tagline { max-width: 440px; line-height: 1.7; color: #8f8075; font-size: 12px; letter-spacing: .08em; margin-top: 36px; }
+      .panel { border: 1px solid #42322c; background: rgba(7,5,5,.82); box-shadow: 0 22px 70px #000, inset 0 0 60px rgba(94,23,18,.08); padding: 30px; }
+      .readout { border: 1px solid #27372d; background: #030806; color: #79d189; padding: 17px; min-height: 88px; box-shadow: inset 0 0 24px rgba(48,181,80,.08); }
+      .readout strong { display: block; font-size: 14px; letter-spacing: .16em; }
+      .readout span { display: block; margin-top: 10px; color: #628c6a; font-size: 10px; line-height: 1.4; }
+      .track { height: 4px; background: #15100e; margin-top: 16px; overflow: hidden; }
+      .track i { display: block; width: 0; height: 100%; background: #76cb82; box-shadow: 0 0 13px #4eba65; transition: width .2s ease; }
+      .actions { display: grid; gap: 10px; margin-top: 24px; }
+      button { font: 700 12px "Courier New", monospace; letter-spacing: .16em; color: #b7a89c; border: 1px solid #4a3a33; padding: 15px 18px; background: #0b0807; cursor: pointer; transition: color .18s, border-color .18s, background .18s, transform .18s; }
+      button:hover { color: #f1e6d9; border-color: #916051; background: #1a0e0c; transform: translateX(3px); }
+      button.primary { color: #050303; background: #b7a995; border-color: #ded2c0; font-size: 15px; padding: 19px; }
+      button.primary:hover { background: #e0d3c0; }
+      button.install { display: none; color: #071008; background: #74c781; border-color: #98eaa4; }
+      .meta { display: flex; justify-content: space-between; color: #574943; font-size: 9px; margin-top: 22px; letter-spacing: .13em; }
+      .quit { position: fixed; z-index: 5; top: 14px; right: 17px; padding: 8px 12px; border: 0; color: #75635a; -webkit-app-region: no-drag; }
+      @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 64px 34px 32px; gap: 28px; } h1 { font-size: 72px; } .tagline { display: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="drag" aria-hidden="true"></div>
+    <div class="shells" aria-hidden="true"></div>
+    <button id="quit" class="quit" type="button" aria-label="Quit launcher">QUIT ×</button>
+    <main>
+      <section>
+        <p class="eyebrow">TABLE CONTROL / LOCAL CLIENT</p>
+        <h1>JIMS <span>ROULETTE</span></h1>
+        <p class="tagline">ONE TABLE. ONE CHAMBER. NO SECOND CHANCES. UPDATES ARE VERIFIED THROUGH VERSIONED GITHUB RELEASES BEFORE INSTALLATION.</p>
+      </section>
+      <section class="panel">
+        <div class="readout" aria-live="polite">
+          <strong id="status">INITIALIZING</strong>
+          <span id="detail">CHECKING THE LOCAL TABLE</span>
+          <div class="track"><i id="progress"></i></div>
+        </div>
+        <div class="actions">
+          <button id="play" class="primary" type="button">ENTER THE ROOM</button>
+          <button id="install" class="install" type="button">RESTART &amp; INSTALL UPDATE</button>
+          <button id="check" type="button">CHECK FOR UPDATES</button>
+        </div>
+        <div class="meta"><span id="version">BUILD —</span><span>GITHUB RELEASE CHANNEL</span></div>
+      </section>
+    </main>
+    <script src="./launcher.js"></script>
+  </body>
+</html>

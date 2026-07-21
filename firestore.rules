@@ -1,0 +1,50 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /rooms/{code} {
+      function signedIn() {
+        return request.auth != null;
+      }
+
+      function isParticipant() {
+        return signedIn() &&
+          (resource.data.hostUid == request.auth.uid || resource.data.guestUid == request.auth.uid);
+      }
+
+      function isJoiningOpenSeat() {
+        return signedIn() &&
+          resource.data.status == 'waiting' &&
+          resource.data.guestUid == null &&
+          request.resource.data.guestUid == request.auth.uid &&
+          request.resource.data.hostUid == resource.data.hostUid &&
+          request.resource.data.seed == resource.data.seed &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guestUid', 'status', 'updatedAt']);
+      }
+
+      function isParticipantCommand() {
+        return isParticipant() &&
+          request.resource.data.hostUid == resource.data.hostUid &&
+          request.resource.data.guestUid == resource.data.guestUid &&
+          request.resource.data.seed == resource.data.seed &&
+          request.resource.data.status == resource.data.status &&
+          request.resource.data.commandSeq == resource.data.commandSeq + 1 &&
+          request.resource.data.commandActorUid == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['command', 'commandActorUid', 'commandSeq', 'updatedAt']);
+      }
+
+      allow create: if signedIn() &&
+        request.resource.data.hostUid == request.auth.uid &&
+        request.resource.data.guestUid == null &&
+        request.resource.data.status == 'waiting' &&
+        request.resource.data.commandSeq == 0;
+
+      // A signed-in player may inspect a four-letter code to take its open seat.
+      // Collection listing remains forbidden, so rooms cannot be enumerated.
+      allow get: if signedIn();
+      allow list: if false;
+      allow update: if isJoiningOpenSeat() || isParticipantCommand();
+      allow delete: if signedIn() && resource.data.hostUid == request.auth.uid;
+    }
+  }
+}

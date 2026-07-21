@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#020202" />
+    <meta name="description" content="Jims Roulette — a first-person game of nerve, deduction, and loaded odds." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Jims Roulette</title>
+  </head>
+  <body>
+    <canvas id="game-canvas" aria-label="Jims Roulette first-person game table"></canvas>
+
+    <div id="loading-screen" class="loading-screen" aria-live="polite">
+      <div class="loading-shell-field" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="loading-brand">
+        <span>JIMS</span>
+        <strong>ROULETTE</strong>
+        <small>TABLE CONTROL / BUILD 02</small>
+      </div>
+      <div class="loading-console">
+        <div class="loading-pulse" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p id="loading-status">POWERING THE TABLE</p>
+        <div class="loading-track"><i id="loading-progress"></i></div>
+        <div class="loading-steps" aria-hidden="true">
+          <span>POWER</span><span>12-GAUGE</span><span>TABLE LINK</span>
+        </div>
+      </div>
+    </div>
+
+    <main id="menu" class="menu-layer">
+      <div class="menu-debris debris-left" aria-hidden="true"></div>
+      <div class="menu-debris debris-right" aria-hidden="true"></div>
+      <div class="brand-block">
+        <h1>JIMS<br /><em>ROULETTE</em></h1>
+        <p>A BROWSER GAME</p>
+      </div>
+      <nav class="menu-actions" aria-label="Game modes">
+        <button id="solo-button" class="menu-button primary">ENTER THE ROOM</button>
+        <button id="multiplayer-button" class="menu-button">PRIVATE TABLE</button>
+        <button id="rules-button" class="menu-button">HOW TO PLAY</button>
+        <button id="credits-button" class="menu-button">CREDITS</button>
+      </nav>
+      <footer class="menu-footer">
+        <span>JIMS ROULETTE · v0.2</span>
+        <button id="audio-button" class="text-button" aria-pressed="false">AUDIO: ON</button>
+      </footer>
+    </main>
+
+    <section id="lobby" class="modal-layer" hidden>
+      <div class="modal-card lobby-card">
+        <button class="modal-close" data-close-modal aria-label="Close">×</button>
+        <p class="eyebrow">PRIVATE TABLE</p>
+        <h2>TAKE THE OTHER CHAIR.</h2>
+        <p>Open a room and send the four-letter code to one other player.</p>
+        <div class="lobby-grid">
+          <button id="create-room" class="action-button">CREATE A ROOM</button>
+          <div class="join-row">
+            <input id="room-code" maxlength="4" autocomplete="off" aria-label="Room code" placeholder="CODE" />
+            <button id="join-room" class="action-button ghost">JOIN</button>
+          </div>
+        </div>
+        <p id="lobby-status" class="lobby-status">THE TABLE IS LISTENING.</p>
+      </div>
+    </section>
+
+    <section id="info-modal" class="modal-layer" hidden>
+      <div class="modal-card info-card">
+        <button class="modal-close" data-close-modal aria-label="Close">×</button>
+        <div id="info-content"></div>
+      </div>
+    </section>
+
+    <section id="intro-ui" class="intro-ui" hidden aria-label="Entry sequence">
+      <div id="intro-caption" class="intro-caption" aria-live="polite"></div>
+      <div id="waiver-screen" class="waiver-screen" hidden>
+        <form id="waiver-form" class="waiver-machine" autocomplete="off">
+          <div class="waiver-paper">
+            <img src="/assets/local-only/original/textures/intro/signature machine2_release form1.png" alt="General Release of Liability" />
+            <div class="paper-signature">
+              <span>ENTER NAME:</span>
+              <output id="waiver-paper-name" aria-live="polite"></output>
+            </div>
+          </div>
+          <div class="signature-console">
+            <div class="signature-display">
+              <small>NAME / MAX 8</small>
+              <input id="waiver-name" name="player-name" maxlength="8" pattern="[A-Za-z]+" spellcheck="false" inputmode="text" aria-label="Enter your name" autofocus />
+            </div>
+            <div id="waiver-keys" class="waiver-keys" aria-label="Signature machine letter keys"></div>
+            <div class="signature-actions">
+              <button id="waiver-backspace" type="button">← ERASE</button>
+              <button id="waiver-submit" type="submit" disabled>ENTER ↵</button>
+            </div>
+            <p>TYPE YOUR NAME OR USE THE MACHINE.</p>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="game-ui" class="game-ui" hidden>
+      <div class="stage-stamp">
+        <span id="mode-label">SOLO</span>
+        <strong id="round-label">ROUND I</strong>
+        <small id="score-label">STORY MODE</small>
+      </div>
+
+      <div class="accessible-status" aria-live="polite">
+        <span id="player-name">YOU</span><span id="player-health-text">2 / 2</span>
+        <span id="opponent-name">THE DEALER</span><span id="opponent-health-text">2 / 2</span>
+        <div id="player-health"></div><div id="opponent-health"></div>
+        <div id="chamber-readout"><b id="live-count">0</b> live, <b id="blank-count">0</b> blank.</div>
+      </div>
+
+      <div id="turn-banner" class="turn-banner">YOUR TURN</div>
+      <div id="shell-reveal" class="dialogue-strip shell-reveal" aria-live="assertive"></div>
+      <div id="event-toast" class="dialogue-strip event-toast" aria-live="assertive"></div>
+
+      <button id="interaction-hint" class="interaction-hint" type="button">CLICK THE SHOTGUN</button>
+      <div id="hover-card" class="hover-card">
+        <strong id="hover-title"></strong>
+        <span id="hover-copy"></span>
+      </div>
+
+      <div class="shot-controls" aria-label="Choose a target">
+        <p>WHO ARE YOU SHOOTING?</p>
+        <div>
+          <button id="shoot-self" class="target-button self"><strong>YOURSELF</strong></button>
+          <button id="shoot-opponent" class="target-button opponent"><strong>THE DEALER</strong></button>
+        </div>
+      </div>
+
+      <div id="inventory" class="inventory-access" aria-label="Inventory"></div>
+      <div id="item-select" class="item-select" hidden></div>
+      <button id="pause-button" class="pause-button" aria-label="Pause">Ⅱ</button>
+    </section>
+    <div id="impact-blackout" class="impact-blackout" aria-hidden="true"></div>
+
+    <section id="result-modal" class="modal-layer" hidden>
+      <div class="modal-card result-card">
+        <p id="result-kicker" class="eyebrow">ROUND COMPLETE</p>
+        <h2 id="result-title">YOU SURVIVED</h2>
+        <p id="result-copy"></p>
+        <button id="result-action" class="action-button">NEXT ROUND</button>
+        <button id="return-menu" class="text-button">LEAVE THE TABLE</button>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

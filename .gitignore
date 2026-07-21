@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+.DS_Store
+.playwright-cli/
+playtest-artifacts/
+output/
+public/assets/local-only/
+*.log
