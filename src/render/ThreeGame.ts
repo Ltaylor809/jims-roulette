@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MechanicalCue } from "../audio/AudioDirector";
 import type { Actor, GameEvent, GameMode, GameState, ItemId, Shell } from "../game/simulation/types";
 import { ASSETS } from "./assets";
@@ -50,8 +51,8 @@ export class ThreeGame {
   private readonly homeLook = new THREE.Vector3(0, 0.76, -0.58);
   private readonly lookTarget = this.homeLook.clone();
   private readonly muzzleLight = new THREE.PointLight(0xffd4a0, 0, 7, 2);
-  private readonly roomLightLeft = new THREE.SpotLight(0xffb58a, 21, 10, 0.52, 0.84, 1.5);
-  private readonly roomLightRight = new THREE.SpotLight(0xffa481, 18, 10, 0.52, 0.84, 1.5);
+  private readonly roomLightLeft = new THREE.SpotLight(0xe1c2ae, 18.2, 10, 0.52, 0.84, 1.5);
+  private readonly roomLightRight = new THREE.SpotLight(0xd8b3a5, 16.2, 10, 0.52, 0.84, 1.5);
   private readonly healthCanvas = document.createElement("canvas");
   private readonly healthTexture: THREE.CanvasTexture;
   private readonly introWorld: IntroWorld;
@@ -71,7 +72,9 @@ export class ThreeGame {
   private animationBusy = false;
   private revealScheduled = false;
   private disposed = false;
-  private frame = 0;
+  private pointerDirty = true;
+  private lastRenderElapsed = 0;
+  private lastSecondaryUpdate = 0;
   private shotgunTargetScale = 1;
   private lastSuddenDeath: Record<Actor, boolean> = { player: false, dealer: false };
   private playerName = "JIM";
@@ -82,10 +85,11 @@ export class ThreeGame {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance", alpha: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.04;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.15));
+    this.renderer.toneMappingExposure = 1.0;
+    // The table is dominated by close, static set dressing. Dynamic shadows were
+    // doubling much of the scene's draw work for very little visible benefit.
+    this.renderer.shadowMap.enabled = false;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 0.85));
     this.scene.background = new THREE.Color(0x030202);
     this.scene.fog = new THREE.FogExp2(0x050303, 0.058);
     this.camera.position.copy(this.homeCamera);
@@ -102,6 +106,7 @@ export class ThreeGame {
     this.activeScene = this.scene;
 
     this.buildRoom();
+    this.mergeStaticRoomGeometry();
     this.buildDealer();
     this.buildMultiplayerRival();
     this.buildHealthMachine();
@@ -604,35 +609,20 @@ export class ThreeGame {
     this.roomLightRight.position.set(1.0, 2.08, -1.82);
     this.roomLightLeft.target.position.set(-0.75, 0.5, -0.05);
     this.roomLightRight.target.position.set(0.75, 0.5, -0.05);
-    this.roomLightLeft.castShadow = true;
-    this.roomLightRight.castShadow = true;
-    this.roomLightLeft.shadow.mapSize.set(1024, 1024);
-    this.roomLightRight.shadow.mapSize.set(1024, 1024);
+    this.roomLightLeft.castShadow = false;
+    this.roomLightRight.castShadow = false;
     this.scene.add(this.roomLightLeft, this.roomLightRight, this.roomLightLeft.target, this.roomLightRight.target);
     this.buildSpotlightHousing(-1.0, 2.08, -1.82, metalMaterial);
     this.buildSpotlightHousing(1.0, 2.08, -1.82, metalMaterial);
-    this.scene.add(new THREE.HemisphereLight(0x826966, 0x160b09, 1.48));
-    const tableFill = new THREE.RectAreaLight(0xffcfb2, 4.4, 5.6, 3.5);
-    tableFill.position.set(0, 2.72, 0.08);
-    tableFill.rotation.x = -Math.PI / 2;
-    this.scene.add(tableFill);
-    const playerSideFill = new THREE.PointLight(0xe4bcb0, 9.2, 5.8, 1.75);
-    playerSideFill.position.set(0, 2.45, 2.4);
-    this.scene.add(playerSideFill);
-    const dealerLight = new THREE.PointLight(0xff8068, 14, 4.2, 1.65);
-    dealerLight.position.set(0, 2.05, -1.28);
-    this.scene.add(dealerLight);
-    for (const x of [-2.65, 2.65]) {
-      const sideGlow = new THREE.PointLight(0x8e2830, 6.5, 4.1, 1.9);
-      sideGlow.position.set(x, 1.35, -1.55);
-      this.scene.add(sideGlow);
-    }
+    this.scene.add(new THREE.HemisphereLight(0x715d5b, 0x110908, 1.08));
+    const dealerFaceLight = new THREE.PointLight(0xff9a80, 8.4, 2.7, 1.85);
+    dealerFaceLight.position.set(0, 1.9, -1.42);
+    this.scene.add(dealerFaceLight);
 
     this.muzzleLight.position.set(0, 1.0, -0.1);
-    this.scene.add(this.muzzleLight);
 
     const dustGeometry = new THREE.BufferGeometry();
-    const dust = new Float32Array(260 * 3);
+    const dust = new Float32Array(120 * 3);
     for (let index = 0; index < dust.length; index += 3) {
       dust[index] = (Math.random() - 0.5) * 6.5;
       dust[index + 1] = Math.random() * 3;
@@ -737,11 +727,7 @@ export class ThreeGame {
       const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), lampMaterial.clone());
       beacon.scale.y = 0.72;
       beacon.position.set(side * 2.72, 2.53, 0.02);
-      const beaconLight = new THREE.PointLight(0xff3a24, 2.4, 1.7, 2);
-      beaconLight.position.copy(beacon.position);
-      beaconLight.userData.phase = side < 0 ? 0 : Math.PI;
-      this.industrialLights.push(beaconLight);
-      root.add(beaconHousing, beacon, beaconLight);
+      root.add(beaconHousing, beacon);
     }
 
     for (const x of [-1.75, 1.75]) {
@@ -828,27 +814,120 @@ export class ThreeGame {
     nose.position.set(0, 0.0, 0.39);
     dealer.add(nose);
 
+    const scarMaterial = new THREE.MeshStandardMaterial({ color: 0x4b2524, roughness: 1 });
     for (const [x, y, scale] of [[-0.3, -0.025, 0.075], [0.3, -0.045, 0.06], [-0.21, 0.28, 0.048]] as const) {
-      const scar = new THREE.Mesh(new THREE.SphereGeometry(scale, 9, 6), new THREE.MeshStandardMaterial({ color: 0x4b2524, roughness: 1 }));
+      const scar = new THREE.Mesh(new THREE.SphereGeometry(scale, 9, 6), scarMaterial);
       scar.scale.set(1.7, 0.45, 0.2);
       scar.position.set(x, y, 0.37);
       scar.rotation.z = x * 0.8;
       dealer.add(scar);
     }
 
-    const handMaterial = new THREE.MeshStandardMaterial({ color: 0x9f6e62, roughness: 0.98 });
-    for (const x of [-0.37, 0.37]) {
-      const hand = this.createHand(handMaterial);
-      hand.position.set(x * 1.28, -0.64, 0.7);
-      hand.rotation.y = x < 0 ? -0.35 : 0.35;
-      hand.rotation.z = x < 0 ? -0.12 : 0.12;
-      hand.scale.setScalar(1.82);
-      dealer.add(hand);
-    }
+    this.mergeDirectMeshes(dealer);
     this.dealer = dealer;
     this.soloDealer = dealer;
     dealer.userData.restY = this.dealerRestY;
     this.scene.add(dealer);
+  }
+
+  private mergeStaticRoomGeometry(): void {
+    this.scene.updateMatrixWorld(true);
+    const dynamicRoots = new Set<THREE.Object3D>([this.roomEntryDoor, ...this.ventilationFans]);
+    const isDynamic = (object: THREE.Object3D): boolean => {
+      let current: THREE.Object3D | null = object;
+      while (current) {
+        if (dynamicRoots.has(current) || current.userData.interaction) return true;
+        current = current.parent;
+      }
+      return false;
+    };
+    const groups = new Map<string, { material: THREE.Material; entries: { mesh: THREE.Mesh; geometry: THREE.BufferGeometry }[] }>();
+    this.scene.traverse((object) => {
+      if (!(object instanceof THREE.Mesh) || object instanceof THREE.SkinnedMesh || isDynamic(object)) return;
+      if (Array.isArray(object.material) || !(object.geometry instanceof THREE.BufferGeometry)) return;
+      const geometry = object.geometry.clone();
+      geometry.applyMatrix4(object.matrixWorld);
+      const key = this.materialBatchKey(object.material);
+      const group = groups.get(key) ?? {
+        material: object.material,
+        entries: [] as { mesh: THREE.Mesh; geometry: THREE.BufferGeometry }[],
+      };
+      group.entries.push({ mesh: object, geometry });
+      groups.set(key, group);
+    });
+    for (const { material, entries } of groups.values()) {
+      if (entries.length < 2) {
+        entries.forEach(({ geometry }) => geometry.dispose());
+        continue;
+      }
+      const mergedGeometry = mergeGeometries(entries.map(({ geometry }) => geometry), false);
+      entries.forEach(({ geometry }) => geometry.dispose());
+      if (!mergedGeometry) continue;
+      const mergedMesh = new THREE.Mesh(mergedGeometry, material);
+      mergedMesh.name = "static-room-batch";
+      this.scene.add(mergedMesh);
+      for (const { mesh } of entries) mesh.parent?.remove(mesh);
+    }
+  }
+
+  private mergeDirectMeshes(root: THREE.Group): void {
+    root.updateMatrixWorld(true);
+    const groups = new Map<string, { material: THREE.Material; entries: { mesh: THREE.Mesh; geometry: THREE.BufferGeometry }[] }>();
+    for (const child of [...root.children]) {
+      if (!(child instanceof THREE.Mesh) || child instanceof THREE.SkinnedMesh || Array.isArray(child.material)) continue;
+      child.updateMatrix();
+      const geometry = child.geometry.clone();
+      geometry.applyMatrix4(child.matrix);
+      const key = child.material.uuid;
+      const group = groups.get(key) ?? {
+        material: child.material,
+        entries: [] as { mesh: THREE.Mesh; geometry: THREE.BufferGeometry }[],
+      };
+      group.entries.push({ mesh: child, geometry });
+      groups.set(key, group);
+    }
+    for (const { material, entries } of groups.values()) {
+      const geometry = mergeGeometries(entries.map((entry) => entry.geometry), false);
+      entries.forEach((entry) => entry.geometry.dispose());
+      if (!geometry) continue;
+      entries.forEach((entry) => root.remove(entry.mesh));
+      root.add(new THREE.Mesh(geometry, material));
+    }
+  }
+
+  private materialBatchKey(material: THREE.Material): string {
+    const candidate = material as THREE.Material & {
+      color?: THREE.Color;
+      emissive?: THREE.Color;
+      emissiveIntensity?: number;
+      roughness?: number;
+      metalness?: number;
+      map?: THREE.Texture | null;
+      normalMap?: THREE.Texture | null;
+      roughnessMap?: THREE.Texture | null;
+      metalnessMap?: THREE.Texture | null;
+      emissiveMap?: THREE.Texture | null;
+      alphaMap?: THREE.Texture | null;
+    };
+    return [
+      material.type,
+      candidate.color?.getHexString() ?? "",
+      candidate.emissive?.getHexString() ?? "",
+      candidate.emissiveIntensity ?? "",
+      candidate.roughness ?? "",
+      candidate.metalness ?? "",
+      candidate.map?.uuid ?? "",
+      candidate.normalMap?.uuid ?? "",
+      candidate.roughnessMap?.uuid ?? "",
+      candidate.metalnessMap?.uuid ?? "",
+      candidate.emissiveMap?.uuid ?? "",
+      candidate.alphaMap?.uuid ?? "",
+      Number(material.transparent),
+      material.opacity,
+      material.side,
+      material.depthWrite,
+      material.blending,
+    ].join("|");
   }
 
   private buildMultiplayerRival(): void {
@@ -954,10 +1033,19 @@ export class ThreeGame {
     this.dealerRestY = Number(active.userData.restY ?? active.position.y);
   }
 
-  private installAuthoredDealer(authoredDealer: THREE.Group): void {
-    for (const child of [...authoredDealer.children]) {
-      if (child.name !== "The_Dealer" && child.name !== "The_Dealer_Armature") authoredDealer.remove(child);
+  private blendDealerIdleHands(actionBlend: number): void {
+    for (const hand of this.dealerIdleHands) {
+      const restScale = Number(hand.userData.restScale ?? 1);
+      hand.scale.setScalar(THREE.MathUtils.lerp(restScale, 0.001, THREE.MathUtils.clamp(actionBlend, 0, 1)));
     }
+  }
+
+  private installAuthoredDealer(authoredPack: THREE.Group): void {
+    const authoredDealer = new THREE.Group();
+    for (const child of [...authoredPack.children]) {
+      if (child.name === "The_Dealer" || child.name === "The_Dealer_Armature") authoredDealer.add(child);
+    }
+    if (!authoredDealer.getObjectByName("The_Dealer")) return;
     const dealerMap = this.loadTexture(ASSETS.dealerTexture);
     authoredDealer.traverse((node) => {
       if (node instanceof THREE.Bone && node.name === "HandL") {
@@ -969,54 +1057,29 @@ export class ThreeGame {
         node.scale.setScalar(0.001);
       }
       if (!(node instanceof THREE.Mesh)) return;
-      node.castShadow = true;
-      node.receiveShadow = true;
       const materials = Array.isArray(node.material) ? node.material : [node.material];
       for (const material of materials) {
         if (!(material instanceof THREE.MeshStandardMaterial) && !(material instanceof THREE.MeshPhongMaterial)) continue;
-        if (!material.map && /dealer|skin|body|head|hand/i.test(`${node.name} ${material.name}`)) material.map = dealerMap;
+        material.map = dealerMap;
+        material.color.set(0xffffff);
+        material.side = THREE.FrontSide;
         if (material instanceof THREE.MeshStandardMaterial) {
-          material.roughness = Math.max(0.72, material.roughness);
-          material.metalness = Math.min(0.12, material.metalness);
+          material.roughness = 0.9;
+          material.metalness = 0.02;
         }
         material.needsUpdate = true;
       }
     });
-
-    const wrapper = this.normalizeModel(authoredDealer, 1.95);
+    const wrapper = this.normalizeModel(authoredDealer, 2.8);
     wrapper.name = "dealer";
-    wrapper.position.set(0, 1.12, -2.3);
-    wrapper.userData.restY = wrapper.position.y;
+    wrapper.position.set(0, 1.08, -2.3);
     wrapper.rotation.y = 0;
+    wrapper.userData.restY = wrapper.position.y;
     this.dealerIdleHands = [];
-    const idleSkin = new THREE.MeshStandardMaterial({ color: 0xb88476, roughness: 0.98 });
-    const idleSleeve = new THREE.MeshStandardMaterial({ color: 0x060505, roughness: 0.96 });
-    for (const side of [-1, 1]) {
-      const hand = this.createHand(idleSkin);
-      hand.position.set(side * 0.47, -0.5, 0.74);
-      hand.rotation.set(-0.17, side < 0 ? -0.3 : 0.3, side < 0 ? -0.16 : 0.16);
-      hand.scale.setScalar(0.84);
-      hand.userData.restScale = 0.84;
-      const reach = new THREE.Vector3(side * -0.1, 0.18, -0.34);
-      const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.34, 5, 9), idleSleeve);
-      sleeve.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), reach.clone().normalize());
-      sleeve.position.copy(reach).multiplyScalar(0.52);
-      sleeve.castShadow = true;
-      hand.add(sleeve);
-      wrapper.add(hand);
-      this.dealerIdleHands.push(hand);
-    }
     if (this.soloDealer) this.scene.remove(this.soloDealer);
     this.soloDealer = wrapper;
     this.scene.add(wrapper);
     this.setOpponentMode(this.opponentMode);
-  }
-
-  private blendDealerIdleHands(actionBlend: number): void {
-    for (const hand of this.dealerIdleHands) {
-      const restScale = Number(hand.userData.restScale ?? 0.84);
-      hand.scale.setScalar(THREE.MathUtils.lerp(restScale, 0.001, THREE.MathUtils.clamp(actionBlend, 0, 1)));
-    }
   }
 
   private installAuthoredShotgun(authoredPack: THREE.Group): void {
@@ -1108,18 +1171,18 @@ export class ThreeGame {
 
   private createHand(material: THREE.Material): THREE.Group {
     const group = new THREE.Group();
-    const palm = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.075, 5, 9), material);
+    const palm = new THREE.Mesh(new THREE.CapsuleGeometry(0.064, 0.082, 5, 9), material);
     palm.rotation.x = Math.PI / 2;
-    palm.scale.set(1.12, 0.88, 1);
+    palm.scale.set(1.3, 0.9, 1);
     group.add(palm);
     for (let index = 0; index < 4; index += 1) {
       const x = (index - 1.5) * 0.039;
-      const base = new THREE.Mesh(new THREE.CapsuleGeometry(0.014 + index * 0.0007, 0.064 - index * 0.003, 4, 7), material);
+      const base = new THREE.Mesh(new THREE.CapsuleGeometry(0.017 + index * 0.0007, 0.064 - index * 0.003, 4, 7), material);
       base.rotation.x = Math.PI / 2;
       base.rotation.z = (index - 1.5) * 0.035;
       base.position.set(x, -0.006, 0.077 + Math.abs(index - 1.5) * 0.004);
-      const tip = new THREE.Mesh(new THREE.CapsuleGeometry(0.0125 + index * 0.0005, 0.043 - index * 0.002, 4, 7), material);
-      tip.rotation.x = Math.PI / 2 + 0.62;
+      const tip = new THREE.Mesh(new THREE.CapsuleGeometry(0.015 + index * 0.0005, 0.043 - index * 0.002, 4, 7), material);
+      tip.rotation.x = Math.PI / 2 + 0.44;
       tip.rotation.z = base.rotation.z;
       tip.position.set(x, -0.027, 0.132 + Math.abs(index - 1.5) * 0.004);
       group.add(base, tip);
@@ -2025,6 +2088,7 @@ export class ThreeGame {
     this.animationBusy = true;
     const shotSequenceStarted = performance.now();
     const gun = this.shotgun;
+    this.scene.add(this.muzzleLight);
     const startPosition = gun.position.clone();
     const startQuaternion = gun.quaternion.clone();
     const dealerStartPosition = this.dealer?.position.clone();
@@ -2036,8 +2100,8 @@ export class ThreeGame {
     const selfShot = event.actor === event.target;
     let blackoutStarted = 0;
     const targetPosition = actorIsLocal
-      ? selfShot ? new THREE.Vector3(0.18, 1.35, 2.08) : new THREE.Vector3(-0.04, 1.28, 1.45)
-      : selfShot ? new THREE.Vector3(0.55, 1.46, -1.48) : new THREE.Vector3(0.45, 1.25, 1.0);
+      ? selfShot ? new THREE.Vector3(0.52, 1.28, 2.02) : new THREE.Vector3(0.68, 1.2, 1.34)
+      : selfShot ? new THREE.Vector3(-0.48, 1.42, -1.5) : new THREE.Vector3(-0.62, 1.24, -1.24);
     const aimPoint = actorIsLocal && selfShot
       ? new THREE.Vector3(-0.02, 1.7, 3.45)
       : !actorIsLocal && !selfShot
@@ -2052,31 +2116,34 @@ export class ThreeGame {
     const tensionCamera = cameraStart.clone().add(new THREE.Vector3(actorIsLocal ? 0.025 : -0.025, selfShot ? -0.025 : 0.02, -0.07));
     const tensionLook = actorIsLocal && selfShot ? new THREE.Vector3(0.08, 1.38, 1.72) : new THREE.Vector3(0, 1.55, -1.72);
     const handMaterial = new THREE.MeshStandardMaterial({
-      color: actorIsLocal ? 0xb38679 : 0xc09282,
+      color: actorIsLocal ? 0xa7766d : 0x855049,
       roughness: 0.98,
     });
     const gripHand = this.createHand(handMaterial);
     const pumpHand = this.createHand(handMaterial.clone());
-    const sleeveMaterial = new THREE.MeshStandardMaterial({ color: actorIsLocal ? 0x171718 : 0x070707, roughness: 0.92 });
-    const cuffMaterial = new THREE.MeshStandardMaterial({ color: actorIsLocal ? 0x302c2d : 0x171212, roughness: 0.8 });
+    const sleeveMaterial = new THREE.MeshStandardMaterial({ color: actorIsLocal ? 0x292629 : 0x0b0909, roughness: 0.92 });
+    const cuffMaterial = new THREE.MeshStandardMaterial({ color: actorIsLocal ? 0x4b3937 : 0x241817, roughness: 0.8 });
     const attachForearm = (hand: THREE.Group, vector: THREE.Vector3) => {
       const length = vector.length();
-      const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, Math.max(0.12, length - 0.14), 5, 9), sleeveMaterial);
+      const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, Math.max(0.12, length - 0.18), 5, 10), sleeveMaterial);
       sleeve.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vector.clone().normalize());
       sleeve.position.copy(vector).multiplyScalar(0.5);
       sleeve.castShadow = true;
-      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.083, 0.074, 0.11, 10), cuffMaterial);
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.108, 0.096, 0.125, 12), cuffMaterial);
       cuff.quaternion.copy(sleeve.quaternion);
       cuff.position.copy(vector).multiplyScalar(0.12);
       cuff.castShadow = true;
       hand.add(sleeve, cuff);
     };
-    const armSign = selfShot ? 1 : -1;
-    const gripReach = actorIsLocal ? 0.44 : selfShot ? 0.4 : 0.92;
-    const pumpReach = actorIsLocal ? 0.58 : selfShot ? 0.48 : 1.06;
-    const armDrop = actorIsLocal ? -0.34 : -0.2;
-    attachForearm(gripHand, new THREE.Vector3(gripReach * armSign, armDrop, 0));
-    attachForearm(pumpHand, new THREE.Vector3(pumpReach * armSign, armDrop - 0.02, 0));
+    const inverseAim = targetQuaternion.clone().invert();
+    const gripWorldReach = actorIsLocal
+      ? new THREE.Vector3(0.32, -0.62, 0.9)
+      : new THREE.Vector3(-0.28, 0.08, -0.78);
+    const pumpWorldReach = actorIsLocal
+      ? new THREE.Vector3(-0.38, -0.68, 0.98)
+      : new THREE.Vector3(0.34, 0.04, -0.86);
+    attachForearm(gripHand, gripWorldReach.applyQuaternion(inverseAim));
+    attachForearm(pumpHand, pumpWorldReach.applyQuaternion(inverseAim));
     const gripTargetScale = actorIsLocal ? (selfShot ? 0.86 : 0.94) : 0.68;
     const pumpTargetScale = actorIsLocal ? (selfShot ? 0.76 : 0.9) : 0.66;
     gripHand.scale.setScalar(0.001);
@@ -2189,11 +2256,13 @@ export class ThreeGame {
     this.shotgunTargetScale = 1;
     if (event.shell === "live") {
       this.muzzleLight.intensity = 52;
-      if (targetIsLocal) window.setTimeout(() => {
-        blackoutStarted = performance.now();
-        this.onBlackout(true);
-      }, 58);
+      let blackoutCommitted = false;
       await this.tween(190, (amount) => {
+        if (targetIsLocal && !blackoutCommitted && amount >= 58 / 190) {
+          blackoutCommitted = true;
+          blackoutStarted = performance.now();
+          this.onBlackout(true);
+        }
         this.muzzleLight.intensity = 52 * (1 - amount);
         const kick = Math.pow(1 - amount, 2.2);
         const settle = Math.sin(amount * Math.PI * 5) * (1 - amount) * 0.012;
@@ -2272,6 +2341,7 @@ export class ThreeGame {
     this.camera.position.copy(cameraStart);
     this.lookTarget.copy(lookStart);
     this.muzzleLight.intensity = 0;
+    this.scene.remove(this.muzzleLight);
     if (this.dealer && dealerStartPosition && dealerStartRotation) {
       this.dealer.position.copy(dealerStartPosition);
       this.dealer.rotation.copy(dealerStartRotation);
@@ -2797,7 +2867,7 @@ export class ThreeGame {
     group.add(core);
     const lens = new THREE.Mesh(
       new THREE.CircleGeometry(0.155, 18),
-      new THREE.MeshBasicMaterial({ color: 0x8a5148, transparent: true, opacity: 0.72 }),
+      new THREE.MeshBasicMaterial({ color: 0x180d0d }),
     );
     lens.position.set(0, 0, 0.205);
     group.add(lens);
@@ -2871,12 +2941,22 @@ export class ThreeGame {
   }
 
   private render(): void {
-    if (this.disposed) return;
+    if (this.disposed || document.hidden) return;
     const elapsed = this.clock.getElapsedTime();
-    this.frame += 1;
-    if (this.shotgun) this.shotgun.scale.x += (this.shotgunTargetScale - this.shotgun.scale.x) * 0.075;
-    this.roomLightLeft.intensity = 20 + Math.sin(elapsed * 7.4) * 1.3 + Math.sin(elapsed * 19.7) * 0.5;
-    this.roomLightRight.intensity = 18 + Math.sin(elapsed * 6.8 + 1.4) * 1.1;
+    const delta = Math.min(0.1, Math.max(1 / 240, elapsed - this.lastRenderElapsed || 1 / 60));
+    this.lastRenderElapsed = elapsed;
+    const smooth = 1 - Math.exp(-4.7 * delta);
+    if (this.activeScene === this.introWorld.scene) this.animateIntroWorld(elapsed);
+    else this.animateTableWorld(elapsed, delta, smooth);
+    this.camera.lookAt(this.lookTarget);
+    if (this.pointerDirty) {
+      this.pointerDirty = false;
+      this.updateHover();
+    }
+    this.renderer.render(this.activeScene, this.camera);
+  }
+
+  private animateIntroWorld(elapsed: number): void {
     this.introWorld.fluorescent.intensity = 25 + Math.sin(elapsed * 39) * 1.4 + (Math.sin(elapsed * 7.3) > 0.94 ? -8 : 0);
     for (const tile of this.introWorld.clubTiles) {
       const material = tile.material as THREE.MeshStandardMaterial;
@@ -2907,24 +2987,33 @@ export class ThreeGame {
     }
     const clubHaze = this.introWorld.scene.getObjectByName("club-haze");
     if (clubHaze) clubHaze.rotation.y = Math.sin(elapsed * 0.14) * 0.07;
-    for (const [index, fan] of this.ventilationFans.entries()) fan.rotation.z = elapsed * (index % 2 ? -1.25 : 1.08);
-    for (const light of this.industrialLights) {
-      const phase = Number(light.userData.phase ?? 0);
-      light.intensity = 1.4 + Math.max(0, Math.sin(elapsed * 3.2 + phase)) * 4.6;
+  }
+
+  private animateTableWorld(elapsed: number, delta: number, smooth: number): void {
+    if (this.shotgun) this.shotgun.scale.x += (this.shotgunTargetScale - this.shotgun.scale.x) * smooth;
+    if (elapsed - this.lastSecondaryUpdate >= 1 / 30) {
+      this.lastSecondaryUpdate = elapsed;
+      if (!this.animationBusy) {
+        this.roomLightLeft.intensity = 18.2 + Math.sin(elapsed * 7.4) * 0.75 + Math.sin(elapsed * 19.7) * 0.25;
+        this.roomLightRight.intensity = 16.2 + Math.sin(elapsed * 6.8 + 1.4) * 0.65;
+      }
+      for (const [index, fan] of this.ventilationFans.entries()) fan.rotation.z = elapsed * (index % 2 ? -1.25 : 1.08);
+      for (const light of this.industrialLights) {
+        const phase = Number(light.userData.phase ?? 0);
+        light.intensity = 1.2 + Math.max(0, Math.sin(elapsed * 3.2 + phase)) * 2.2;
+      }
+      const dust = this.scene.getObjectByName("dust");
+      if (dust) dust.rotation.y = elapsed * 0.018;
     }
-    const dust = this.scene.getObjectByName("dust");
-    if (dust) dust.rotation.y = elapsed * 0.018;
     if (this.dealer && !this.animationBusy) {
-      this.dealer.position.y = this.dealerRestY + Math.sin(elapsed * 1.1) * 0.018;
-      this.dealer.rotation.z = Math.sin(elapsed * 0.48) * 0.014;
+      this.dealer.position.y = this.dealerRestY + Math.sin(elapsed * 1.1) * 0.014;
+      this.dealer.rotation.z = Math.sin(elapsed * 0.48) * 0.01;
     }
     if (this.tableActive && !this.animationBusy) {
-      this.camera.position.x += (this.pointer.x * 0.055 - this.camera.position.x) * 0.022;
-      this.camera.position.y += (this.homeCamera.y + this.pointer.y * 0.03 - this.camera.position.y) * 0.022;
+      const cameraSmooth = 1 - Math.exp(-1.34 * delta);
+      this.camera.position.x += (this.pointer.x * 0.055 - this.camera.position.x) * cameraSmooth;
+      this.camera.position.y += (this.homeCamera.y + this.pointer.y * 0.03 - this.camera.position.y) * cameraSmooth;
     }
-    this.camera.lookAt(this.lookTarget);
-    if (this.frame % 3 === 0) this.updateHover();
-    this.renderer.render(this.activeScene, this.camera);
   }
 
   private updateHover(): void {
@@ -2958,8 +3047,12 @@ export class ThreeGame {
     this.canvas.addEventListener("pointermove", (event) => {
       const bounds = this.canvas.getBoundingClientRect();
       this.pointer.set(((event.clientX - bounds.left) / bounds.width) * 2 - 1, -((event.clientY - bounds.top) / bounds.height) * 2 + 1);
+      this.pointerDirty = true;
     });
-    this.canvas.addEventListener("pointerleave", () => this.pointer.set(4, 4));
+    this.canvas.addEventListener("pointerleave", () => {
+      this.pointer.set(4, 4);
+      this.pointerDirty = true;
+    });
     this.canvas.addEventListener("click", () => {
       if (!this.tableActive || this.animationBusy) return;
       this.raycaster.setFromCamera(this.pointer, this.camera);

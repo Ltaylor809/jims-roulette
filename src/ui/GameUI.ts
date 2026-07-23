@@ -291,7 +291,7 @@ export class GameUI {
     const dealerLine = this.dealerLineFor(event);
     if (dealerLine) this.showDealerLine(dealerLine);
     if (event.kind === "shot") this.disarmShotgun();
-    if (event.kind === "shot" && event.shell === "live") {
+    if (event.kind === "shot" && event.shell === "live" && this.controller && event.target === this.controller.localActor) {
       document.body.classList.remove("damage-flash");
       void document.body.offsetWidth;
       document.body.classList.add("damage-flash");

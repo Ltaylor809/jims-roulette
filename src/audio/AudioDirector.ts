@@ -24,6 +24,30 @@ export type MechanicalCue =
   | "clubOpen"
   | "clubMuffle";
 
+const mechanicalSounds: Partial<Record<MechanicalCue, string>> = {
+  briefcase: original + "open briefcase.ogg",
+  shells: original + "shell latch1.ogg",
+  rack: local + "rack_shotgun.ogg",
+  saw: original + "blade cut.ogg",
+  wire: original + "health counter reduce health.ogg",
+  door: original + "intro/kick door enter backroom.ogg",
+  mainDoor: original + "intro/kick door enter backroom.ogg",
+  walk: original + "intro/crt_player walk.ogg",
+  gunFoley: original + "intro/gun foley1.ogg",
+  rackForward: original + "intro/rack shotgun_forward.ogg",
+  rackBack: original + "intro/rack shotgun_back.ogg",
+  loadShell: local + "load_shell.ogg",
+  splatter: original + "intro/splatter1.ogg",
+  dealerHands: original + "dealer hands on table.ogg",
+};
+
+const signatureSounds = {
+  boot: original + "intro/signature machine bootup high pass.ogg",
+  key: original + "intro/signature machine key press.ogg",
+  letter: original + "intro/signature machine letter punch.ogg",
+  shutdown: original + "intro/signature machine shutdown1.ogg",
+} as const;
+
 export class AudioDirector {
   private enabled = true;
   private started = false;
@@ -39,6 +63,11 @@ export class AudioDirector {
   private clubSource: MediaElementAudioSourceNode | null = null;
   private clubFilter: BiquadFilterNode | null = null;
   private clubGain: GainNode | null = null;
+  private effectsContext: AudioContext | null = null;
+  private readonly effectBuffers = new Map<string, AudioBuffer>();
+  private readonly effectLoads = new Map<string, Promise<void>>();
+  private readonly fallbackPools = new Map<string, HTMLAudioElement[]>();
+  private readonly fallbackIndices = new Map<string, number>();
   private sounds = {
     live: local + "gunshot_live.wav",
     blank: local + "gunshot_blank.wav",
@@ -87,6 +116,9 @@ export class AudioDirector {
       this.started = true;
       this.phase = "restroom";
     }
+    this.ensureEffectsContext();
+    void this.effectsContext?.resume();
+    this.preloadEffects();
     if (!this.enabled) return;
     void this.ambience.play().catch(() => undefined);
   }
@@ -104,6 +136,7 @@ export class AudioDirector {
     if (this.enabled) {
       if (!this.started) this.start();
       void this.clubContext?.resume();
+      void this.effectsContext?.resume();
       void this.ambience.play().catch(() => undefined);
       if (this.phase === "table") void this.music.play().catch(() => undefined);
       if (this.clubStarted) void this.club.play().catch(() => undefined);
@@ -141,7 +174,7 @@ export class AudioDirector {
       ...Array(live).fill(original + "shell indicator_live.ogg"),
       ...Array(blank).fill(original + "shell indicator_blank.ogg"),
     ];
-    sequence.forEach((url, index) => window.setTimeout(() => this.playUrl(url, 0.42), index * 330));
+    sequence.forEach((url, index) => this.playUrl(url, 0.42, index * 330));
   }
 
   mechanical(cue: MechanicalCue): void {
@@ -160,34 +193,13 @@ export class AudioDirector {
       return;
     }
     if (!this.enabled) return;
-    const sounds = {
-      briefcase: original + "open briefcase.ogg",
-      shells: original + "shell latch1.ogg",
-      rack: local + "rack_shotgun.ogg",
-      saw: original + "blade cut.ogg",
-      wire: original + "health counter reduce health.ogg",
-      door: original + "intro/kick door enter backroom.ogg",
-      mainDoor: original + "intro/kick door enter backroom.ogg",
-      walk: original + "intro/crt_player walk.ogg",
-      gunFoley: original + "intro/gun foley1.ogg",
-      rackForward: original + "intro/rack shotgun_forward.ogg",
-      rackBack: original + "intro/rack shotgun_back.ogg",
-      loadShell: local + "load_shell.ogg",
-      splatter: original + "intro/splatter1.ogg",
-      dealerHands: original + "dealer hands on table.ogg",
-    } as const;
-    this.playUrl(sounds[cue], cue === "wire" ? 0.62 : cue === "mainDoor" ? 0.36 : cue === "dealerHands" ? 0.19 : 0.48);
+    const url = mechanicalSounds[cue];
+    if (url) this.playUrl(url, cue === "wire" ? 0.62 : cue === "mainDoor" ? 0.36 : cue === "dealerHands" ? 0.19 : 0.48);
   }
 
   signature(cue: "boot" | "key" | "letter" | "shutdown"): void {
     if (!this.enabled) return;
-    const sounds = {
-      boot: original + "intro/signature machine bootup high pass.ogg",
-      key: original + "intro/signature machine key press.ogg",
-      letter: original + "intro/signature machine letter punch.ogg",
-      shutdown: original + "intro/signature machine shutdown1.ogg",
-    } as const;
-    this.playUrl(sounds[cue], cue === "boot" ? 0.5 : 0.42);
+    this.playUrl(signatureSounds[cue], cue === "boot" ? 0.5 : 0.42);
   }
 
   setDanger(health: number): void {
@@ -270,9 +282,80 @@ export class AudioDirector {
     this.playUrl(this.sounds[key], volume);
   }
 
-  private playUrl(url: string, volume: number): void {
-    const sound = new Audio(url);
-    sound.volume = volume;
-    void sound.play().catch(() => undefined);
+  private ensureEffectsContext(): void {
+    if (this.effectsContext) return;
+    try {
+      this.effectsContext = new AudioContext({ latencyHint: "interactive" });
+    } catch {
+      this.effectsContext = null;
+    }
+  }
+
+  private preloadEffects(): void {
+    const urls = new Set([
+      ...Object.values(this.sounds),
+      ...Object.values(this.itemSounds),
+      ...Object.values(this.itemPickupSounds),
+      ...Object.values(mechanicalSounds),
+      ...Object.values(signatureSounds),
+    ].filter((url): url is string => Boolean(url)));
+    for (const url of urls) void this.loadEffect(url);
+  }
+
+  private loadEffect(url: string): Promise<void> {
+    if (!this.effectsContext || this.effectBuffers.has(url)) return Promise.resolve();
+    const existing = this.effectLoads.get(url);
+    if (existing) return existing;
+    const load = fetch(url)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Audio preload failed: ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((bytes) => this.effectsContext?.decodeAudioData(bytes))
+      .then((buffer) => {
+        if (buffer) this.effectBuffers.set(url, buffer);
+      })
+      .catch(() => undefined)
+      .finally(() => this.effectLoads.delete(url));
+    this.effectLoads.set(url, load);
+    return load;
+  }
+
+  private playUrl(url: string, volume: number, delayMs = 0): void {
+    const context = this.effectsContext;
+    const buffer = this.effectBuffers.get(url);
+    if (context && buffer) {
+      const source = context.createBufferSource();
+      const gain = context.createGain();
+      gain.gain.value = volume;
+      source.buffer = buffer;
+      source.connect(gain).connect(context.destination);
+      source.start(context.currentTime + Math.max(0, delayMs) / 1000);
+      return;
+    }
+
+    if (context) void this.loadEffect(url);
+    const playFallback = () => {
+      let pool = this.fallbackPools.get(url);
+      if (!pool) {
+        pool = Array.from({ length: 3 }, () => {
+          const sound = new Audio(url);
+          sound.preload = "auto";
+          sound.load();
+          return sound;
+        });
+        this.fallbackPools.set(url, pool);
+      }
+      const available = pool.find((sound) => sound.paused || sound.ended);
+      const index = this.fallbackIndices.get(url) ?? 0;
+      const sound = available ?? pool[index % pool.length];
+      this.fallbackIndices.set(url, (index + 1) % pool.length);
+      sound.pause();
+      sound.currentTime = 0;
+      sound.volume = volume;
+      void sound.play().catch(() => undefined);
+    };
+    if (delayMs > 0) window.setTimeout(playFallback, delayMs);
+    else playFallback();
   }
 }
