@@ -7,6 +7,10 @@ type AudioPhase = "idle" | "restroom" | "club-open" | "club-muted" | "table";
 
 export type MechanicalCue =
   | "briefcase"
+  | "briefcaseShow"
+  | "briefcaseLatch1"
+  | "briefcaseLatch2"
+  | "briefcaseHide"
   | "shells"
   | "rack"
   | "saw"
@@ -26,6 +30,10 @@ export type MechanicalCue =
 
 const mechanicalSounds: Partial<Record<MechanicalCue, string>> = {
   briefcase: original + "open briefcase.ogg",
+  briefcaseShow: original + "briefcase compartment show.ogg",
+  briefcaseLatch1: original + "briefcase latch1.ogg",
+  briefcaseLatch2: original + "briefcase latch2.ogg",
+  briefcaseHide: original + "briefcase compartment hide.ogg",
   shells: original + "shell latch1.ogg",
   rack: local + "rack_shotgun.ogg",
   saw: original + "blade cut.ogg",

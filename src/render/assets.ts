@@ -1,4 +1,3 @@
-const poly = (id: string) => `/assets/models/polyhaven/${id}/${id}_1k.gltf`;
 const supplied = "/assets/local-only/original";
 
 export const ASSETS = {
@@ -7,11 +6,6 @@ export const ASSETS = {
   dealerTexture: "/assets/models/vibapop-dealer/The%20Dealer%20Texture.png",
   dealerItemsTexture: "/assets/models/vibapop-dealer/Items%20Texture.png",
   dealerItemsEmission: "/assets/models/vibapop-dealer/Items%20Emission.png",
-  itemModels: {
-    magnifier: poly("magnifying_glass_01"),
-    cigarettes: poly("cigarette_pack"),
-    handSaw: poly("handsaw_wood"),
-  },
   textures: {
     felt: `${supplied}/textures/felt.png`,
     feltShellRack: `${supplied}/textures/felt-shell-rack.png`,
